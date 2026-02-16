@@ -99,7 +99,11 @@ Press **6** to stop all speaker output (kills both baresip and direct stream). H
 
 **DTMF 7 (direct stream):** Pressing 7 triggers the `[speaker-stream]` context, which runs `/usr/local/bin/radio-speaker start <bridge>`. This script launches `ffplay` as the `hazel` user (via sudoers) to play the station's webstream directly through PulseAudio. A PID file at `/tmp/radio-speaker.pid` tracks the process for cleanup.
 
-**Note on audio from Asterisk `System()`:** Asterisk runs as the `asterisk` user, which has no access to PulseAudio. The `radio-speaker` script uses `sudo -u hazel` with `XDG_RUNTIME_DIR=/run/user/1000` to run ffplay under the desktop user's audio session. This is authorized by `/etc/sudoers.d/radio-speaker` (`SETENV` + `NOPASSWD` for `/usr/bin/ffplay` only).
+**Note on audio from Asterisk `System()`:** Asterisk runs as the `asterisk` user, which has no access to PulseAudio. The `radio-speaker` script uses `sudo -u hazel` with `XDG_RUNTIME_DIR=/run/user/1000` to run ffplay under the desktop user's audio session. This is authorized by `/etc/sudoers.d/radio-speaker` (`SETENV` + `NOPASSWD` for `/usr/bin/ffplay` and `/usr/bin/aplay`).
+
+**Gotcha — backgrounding processes from `System()`:** Asterisk's `System()` runs commands via `/bin/sh -c`. When the shell exits, backgrounded child processes may get killed. Use `nohup` and redirect stdout/stderr to keep processes alive: `System(nohup /path/to/script args > /dev/null 2>&1 &)`. The `radio-speaker` script uses `exec` to replace itself with `sudo ffplay`, and writes its PID (`$$`) to `/tmp/radio-speaker.pid` before the exec so the PID file is guaranteed to exist.
+
+**Gotcha — file permissions for `asterisk` user:** The asterisk user cannot traverse `/home/hazel/`, so any files it needs (like API keys) must be placed somewhere accessible. The Deepgram API key lives at `/etc/asterisk/deepgram.env` (owner: asterisk, mode: 600). If the key in `~/operator/.env` is rotated, update the copy: `grep DEEPGRAM_API_KEY ~/operator/.env | sudo tee /etc/asterisk/deepgram.env`
 
 **baresip** is a headless SIP softphone running as a systemd user service on the ThinkPad.
 
@@ -149,7 +153,7 @@ For confbridge.conf changes (menu, profiles): `sudo asterisk -rx "module reload 
 
 ## Troubleshooting
 
-**Silence on all or some extensions after restart/sleep**: The HT701 loses RTP sync when Asterisk restarts or the ThinkPad sleeps. SIP signaling still works (calls connect, Asterisk sees them) but audio is silently dropped. Can affect native Asterisk audio, AudioSocket agents, or both. Fix: power cycle the HT701 (unplug power, wait 5s, plug back in). Web UI reboot is not sufficient.
+**Silence on all or some extensions after restart/sleep**: The HT701 loses RTP sync when Asterisk restarts or the ThinkPad sleeps. SIP signaling still works (calls connect, Asterisk sees them) but audio is silently dropped. Can affect native Asterisk audio, AudioSocket agents, or both. Fix: power cycle the HT701 (unplug power, wait 5s, plug back in). Web UI reboot is not sufficient. Note: `dialplan reload` can also trigger this — any Asterisk reload risks an RTP desync.
 
 **PJSIP qualify keepalive**: The AOR for endpoint 100 has `qualify_frequency=30`, which sends SIP OPTIONS pings to the HT701 every 30 seconds. This serves two purposes: (1) keeps the NAT/RTP path alive so the ATA doesn't lose sync during idle periods, and (2) lets Asterisk detect when the ATA becomes unreachable (contact status changes from `Reachable` to `Unavailable`). Check status with `sudo asterisk -rx 'pjsip show aors'`.
 
