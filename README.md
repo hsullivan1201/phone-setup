@@ -59,7 +59,7 @@ Each routes through AudioSocket to a standalone Python agent in `~/agents/`.
 | 713 | KQED 88.5 | San Francisco |
 | 714 | KBOO 90.7 | Portland |
 | 715 | XRAY.fm 91.1 | Portland |
-| 716 | The Gamut | Oklahoma |
+| 716 | The Gamut (WWFD 820 AM) | Washington DC |
 | 717 | WETA Classical 90.9 | Washington DC |
 | 718 | NPR | National |
 
