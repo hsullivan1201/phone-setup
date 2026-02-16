@@ -119,6 +119,23 @@ For pjsip.conf changes: `sudo asterisk -rx "pjsip reload res_pjsip.so"`
 - Call progress tones: French (440Hz)
 - Config changes sometimes need a power cycle, not just Apply
 
+## Troubleshooting
+
+**Silence on all or some extensions after restart/sleep**: The HT701 loses RTP sync when Asterisk restarts or the ThinkPad sleeps. SIP signaling still works (calls connect, Asterisk sees them) but audio is silently dropped. Can affect native Asterisk audio, AudioSocket agents, or both. Fix: power cycle the HT701 (unplug power, wait 5s, plug back in). Web UI reboot is not sufficient.
+
+**Laptop suspend disabled**: The ThinkPad must stay awake for Asterisk and the agents. Suspend/hibernate is masked and lid close is set to ignore (screen blanks but system stays up).
+
+```bash
+# What was changed
+sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+# /etc/systemd/logind.conf: HandleLidSwitch=ignore, HandleLidSwitchExternalPower=ignore
+
+# To re-enable suspend later
+sudo systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target
+# Then revert logind.conf lines back to #HandleLidSwitch=suspend etc. and run:
+# sudo systemctl restart systemd-logind
+```
+
 ## Useful commands
 
 ```bash
