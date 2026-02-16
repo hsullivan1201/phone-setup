@@ -97,6 +97,8 @@ Press **6** to stop all speaker output (kills both baresip and direct stream). H
 
 **DTMF 7 (direct stream):** Pressing 7 triggers the `[speaker-stream]` context, which runs `/usr/local/bin/radio-speaker start <bridge>`. This script launches `ffplay` as the `hazel` user (via sudoers) to play the station's webstream directly through PulseAudio. A PID file at `/tmp/radio-speaker.pid` tracks the process for cleanup.
 
+**Note on audio from Asterisk `System()`:** Asterisk runs as the `asterisk` user, which has no access to PulseAudio. The `radio-speaker` script uses `sudo -u hazel` with `XDG_RUNTIME_DIR=/run/user/1000` to run ffplay under the desktop user's audio session. This is authorized by `/etc/sudoers.d/radio-speaker` (`SETENV` + `NOPASSWD` for `/usr/bin/ffplay` only).
+
 **baresip** is a headless SIP softphone running as a systemd user service on the ThinkPad.
 
 | | |
@@ -122,6 +124,8 @@ sudo asterisk -rx "dialplan reload"
 ```
 
 For pjsip.conf changes: `sudo asterisk -rx "pjsip reload res_pjsip.so"`
+
+For confbridge.conf changes (menu, profiles): `sudo asterisk -rx "module reload app_confbridge"` — `dialplan reload` alone won't pick up ConfBridge menu changes.
 
 ## Helper scripts
 
