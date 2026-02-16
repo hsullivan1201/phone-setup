@@ -28,7 +28,7 @@ declare -A STREAMS=(
 )
 
 stop_playback() {
-    pkill -x ffplay 2>/dev/null
+    pkill -f "ffplay.*-nodisp" 2>/dev/null
     rm -f "$PID_FILE"
 }
 
