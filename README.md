@@ -97,11 +97,15 @@ Press **6** to stop all speaker output (kills both baresip and direct stream). H
 
 **DTMF 5 (ConfBridge/baresip):** Pressing 5 triggers the `[speaker-control]` context, which originates a SIP call to endpoint 150 (baresip). baresip auto-answers, joins the same ConfBridge as `speaker_user`, and routes audio to PulseAudio's default output.
 
-**DTMF 7 (direct stream):** Pressing 7 triggers the `[speaker-stream]` context, which runs `/usr/local/bin/radio-speaker start <bridge>`. This script launches `ffplay` as the `hazel` user (via sudoers) to play the station's webstream directly through PulseAudio. A PID file at `/tmp/radio-speaker.pid` tracks the process for cleanup.
+**DTMF 7 (direct stream):** Pressing 7 triggers the `[speaker-stream]` context, which runs `/usr/local/bin/radio-speaker start <bridge>`. The script uses `setsid` to launch `ffplay` as the `hazel` user in a new session (so it survives Asterisk's process cleanup), playing the station's webstream directly through PulseAudio.
 
-**Note on audio from Asterisk `System()`:** Asterisk runs as the `asterisk` user, which has no access to PulseAudio. The `radio-speaker` script uses `sudo -u hazel` with `XDG_RUNTIME_DIR=/run/user/1000` to run ffplay under the desktop user's audio session. This is authorized by `/etc/sudoers.d/radio-speaker` (`SETENV` + `NOPASSWD` for `/usr/bin/ffplay` and `/usr/bin/aplay`).
+**DTMF 4 (now playing) on speakers:** When ffplay is running (detected via `pgrep -x ffplay`), pressing 4 also plays the TTS announcement on the laptop speakers using `paplay`. This uses Deepgram Aura 2 for natural-sounding voice (falls back to espeak-ng if Deepgram is unavailable).
 
-**Gotcha — backgrounding processes from `System()`:** Asterisk's `System()` runs commands via `/bin/sh -c`. When the shell exits, backgrounded child processes may get killed. Use `nohup` and redirect stdout/stderr to keep processes alive: `System(nohup /path/to/script args > /dev/null 2>&1 &)`. The `radio-speaker` script uses `exec` to replace itself with `sudo ffplay`, and writes its PID (`$$`) to `/tmp/radio-speaker.pid` before the exec so the PID file is guaranteed to exist.
+**Note on audio from Asterisk `System()`:** Asterisk runs as the `asterisk` user, which has no access to PulseAudio. Scripts use `sudo -u hazel` with `XDG_RUNTIME_DIR=/run/user/1000` to run audio commands under the desktop user's session. Authorized by `/etc/sudoers.d/radio-speaker` (`SETENV` + `NOPASSWD` for `/usr/bin/ffplay` and `/usr/bin/paplay`).
+
+**Gotcha — backgrounding processes from `System()`:** Asterisk's `System()` kills backgrounded child processes when the parent shell exits. The fix is `setsid` — it creates a new process session that Asterisk can't clean up. The `radio-speaker` script calls `System()` synchronously (no `&` in the dialplan); `setsid` handles the detach internally. Note: PID file writes after `setsid ... &` are unreliable because the script may be killed before the write. The `now-playing` script detects ffplay via `pgrep` instead of relying on a PID file.
+
+**Gotcha — ALSA vs PulseAudio for concurrent audio:** `aplay` uses ALSA directly and can't play while ffplay has the device open (`Device or resource busy`). Use `paplay` instead — it goes through PulseAudio which handles mixing multiple audio streams.
 
 **Gotcha — file permissions for `asterisk` user:** The asterisk user cannot traverse `/home/hazel/`, so any files it needs (like API keys) must be placed somewhere accessible. The Deepgram API key lives at `/etc/asterisk/deepgram.env` (owner: asterisk, mode: 600). If the key in `~/operator/.env` is rotated, update the copy: `grep DEEPGRAM_API_KEY ~/operator/.env | sudo tee /etc/asterisk/deepgram.env`
 

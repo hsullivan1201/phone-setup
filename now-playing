@@ -215,20 +215,22 @@ def generate_tts(text, output_path):
 
 def speaker_is_active():
     """Check if direct stream is playing on laptop speakers."""
+    # Check if any ffplay process is running (launched by radio-speaker)
     try:
-        with open(SPEAKER_PID_FILE) as f:
-            pid = int(f.read().strip())
-        # PID is the sudo process (root-owned), so check /proc instead of kill()
-        return os.path.exists(f"/proc/{pid}")
-    except (FileNotFoundError, ValueError):
+        result = subprocess.run(
+            ["pgrep", "-x", "ffplay"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return result.returncode == 0
+    except Exception:
         return False
 
 
 def play_on_speaker(wav_path):
-    """Play wav on laptop speakers (runs aplay as hazel)."""
+    """Play wav on laptop speakers (runs paplay as hazel via PulseAudio)."""
     subprocess.Popen(
         ["sudo", "-u", "hazel", "XDG_RUNTIME_DIR=/run/user/1000",
-         "aplay", "-q", wav_path],
+         "paplay", wav_path],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
