@@ -11,11 +11,12 @@
 - HT701 web UI: http://192.168.10.126 (password: `admin`)
 
 ## Services
-Both `asterisk` and `dnsmasq` are enabled at boot via systemd. The static IP on `enp0s31f6` persists via dhcpcd.conf. The HT701 retains its config in flash.
+`asterisk` and `dnsmasq` are system services (enabled at boot via systemd). `baresip` is a user service (enabled via `systemctl --user`). The static IP on `enp0s31f6` persists via dhcpcd.conf. The HT701 retains its config in flash.
 
 After a reboot, everything should come up automatically. To verify:
 ```bash
-sudo asterisk -rx 'pjsip show endpoints'   # should show 100 as "Not in use"
+sudo asterisk -rx 'pjsip show endpoints'   # should show 100 and 150 as "Not in use"
+systemctl --user status baresip             # should show active (running)
 ```
 
 ## Extensions
@@ -28,11 +29,53 @@ sudo asterisk -rx 'pjsip show endpoints'   # should show 100 as "Not in use"
 | 3 | DTMF test (enter 4 digits, hear them read back) |
 | 4 | Music on hold (local files) |
 | 5 | "Congratulations" demo message |
-| 6 | CISM 89.3 Montreal (internet radio stream) |
-| 7 | KEXP Seattle (internet radio stream) |
-| 8 | The Gamut (internet radio stream) |
+| 6 | CISM 89.3 Montreal (internet radio via ConfBridge) |
+| 7 | KEXP Seattle (internet radio via ConfBridge) |
+| 8 | The Gamut (internet radio via ConfBridge) |
+| **\*5** | **Activate room speakers** (while listening to radio) |
+| **\*6** | **Deactivate room speakers** |
 
 Ring the phone from the laptop: `ring-phone`
+
+## Room Speakers
+
+Radio stations (6/7/8) now use ConfBridge, which allows routing audio to the ThinkPad's speakers via a local softphone (baresip, ext 150).
+
+```
+                    +-------------------------------------+
+                    |          ThinkPad (same box)         |
+                    |                                     |
+JAZZ --- HT701 --> |  Asterisk PBX <--SIP--> baresip     | --> Speakers
+  (analog)  (SIP)  |   (ext 100)              (ext 150)  |     (built-in)
+                    |                                     |
+                    +-------------------------------------+
+```
+
+### Usage
+
+**Listen on handset only (default):** Dial 6/7/8 as usual.
+
+**Add room speakers:** While listening to radio, press `*5`. Asterisk calls baresip, which auto-answers and joins the same ConfBridge. Audio plays through both the handset and the laptop speakers.
+
+**Speakers only:** Press `*5`, then hang up the handset. Radio continues through speakers.
+
+**Kill speakers:** Pick up the handset, dial `*6` (or restart baresip).
+
+### How it works
+
+Each radio station runs through a ConfBridge instead of direct MP3Player. A Local channel injects the stream into the bridge. When `*5` is pressed, Asterisk originates a call to baresip (ext 150), which auto-answers and joins the same bridge. The speaker has `wait_marked=yes`, so it only plays audio when the stream (the marked user) is present.
+
+### baresip
+
+`baresip` runs as a systemd user service, registered as ext 150 on localhost.
+
+```bash
+systemctl --user status baresip       # check status
+systemctl --user restart baresip      # restart
+journalctl --user -u baresip -f       # follow logs
+```
+
+Config lives in `~/.baresip/` (accounts, config). Audio output goes through PulseAudio to whatever the default output device is.
 
 ## Adding new extensions
 
@@ -115,12 +158,15 @@ Asterisk routes extension 0 through AudioSocket, which streams raw PCM audio ove
 |------|----------|
 | `pjsip.conf` | `/etc/asterisk/pjsip.conf` |
 | `extensions.conf` | `/etc/asterisk/extensions.conf` |
+| `confbridge.conf` | `/etc/asterisk/confbridge.conf` |
 | `dnsmasq.conf` | `/etc/dnsmasq.conf` |
 | `indications.conf` | `/etc/asterisk/indications.conf` (country=fr) |
 | `ring-phone` | `/usr/local/bin/ring-phone` |
 | dhcpcd static IP | `/etc/dhcpcd.conf` (bottom of file) |
+| baresip config | `~/.baresip/accounts`, `~/.baresip/config` |
+| baresip service | `~/.config/systemd/user/baresip.service` |
 
-Backups of these are in this directory (`~/phone-setup/`).
+Backups of Asterisk configs are in this directory (`~/phone-setup/`).
 
 ## HT701 Config (set via web UI)
 - Primary SIP Server: `192.168.10.1`
@@ -147,10 +193,12 @@ Installed to `/var/lib/asterisk/sounds/fr/`. The endpoint has `language=fr` and 
 ring-phone                                          # ring the Nortel
 sudo asterisk -rx 'pjsip show endpoints'            # check registration
 sudo asterisk -rx 'core show channels'              # see active calls
+sudo asterisk -rx 'confbridge list'                 # see active ConfBridges
 sudo asterisk -rx 'channel request hangup all'      # hang up all calls
 sudo asterisk -rx 'dialplan reload'                 # reload extensions.conf
 sudo asterisk -rx 'core reload'                     # reload everything
 sudo asterisk -rvvv                                 # live Asterisk console (verbose)
+systemctl --user restart baresip                    # restart speaker softphone
 ```
 
 ## Laptop notes
