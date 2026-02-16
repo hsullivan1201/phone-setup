@@ -175,7 +175,7 @@ def get_now_playing(station_id):
     # Try API first
     api = station.get("api")
     if api and api in API_FETCHERS:
-        result = API_FETCHERS[api]()
+        result = format_track_info(API_FETCHERS[api]())
         if result:
             return result
     # Fall back to ICY metadata
