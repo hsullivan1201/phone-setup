@@ -74,6 +74,8 @@ DTMF while listening: **4** = now playing, **5** = speakers on (ConfBridge/bares
 | `confbridge.conf` | ConfBridge profiles for radio + DTMF menu |
 | `musiconhold.conf` | AAC stream decoding for CIUT and WETA (via ffmpeg) |
 | `dnsmasq.conf` | DHCP/DNS for the HT701 |
+| `/etc/asterisk/deepgram.env` | Deepgram API key for now-playing TTS (readable by asterisk user only) |
+| `/etc/sudoers.d/radio-speaker` | Lets asterisk user run ffplay/aplay as hazel for speaker audio |
 
 ### How radio works
 
@@ -131,7 +133,7 @@ For confbridge.conf changes (menu, profiles): `sudo asterisk -rx "module reload 
 
 | Script | Deployed to | What |
 |--------|-------------|------|
-| `now-playing` | `/usr/local/bin/now-playing` | Fetch track info (ICY metadata + KEXP/BFF/WNYC APIs), generate TTS wav |
+| `now-playing` | `/usr/local/bin/now-playing` | Fetch track info (ICY metadata + KEXP/BFF/WNYC APIs), generate TTS wav via Deepgram Aura 2 (falls back to espeak-ng). Also announces on laptop speakers when direct stream is active. |
 | `radio-speaker` | `/usr/local/bin/radio-speaker` | Direct webstream playback on laptop speakers via ffplay (`start <station>` / `stop`) |
 | `stream-decode` | `/usr/local/bin/stream-decode` | ffmpeg wrapper: any audio stream -> 8kHz slin16 for Asterisk |
 | `ring-phone` | `/usr/local/bin/ring-phone` | Ring the Nortel |

@@ -7,10 +7,12 @@ Usage:
 """
 
 import json
+import os
 import struct
 import subprocess
 import sys
 import urllib.request
+import wave
 
 STATIONS = {
     # Canada
@@ -33,11 +35,31 @@ STATIONS = {
     "radio-kqed":      {"name": "KQED",      "stream": "https://streams.kqed.org/kqedradio"},
     "radio-kboo":      {"name": "KBOO",      "stream": "http://listen.kboo.fm:8000/high"},
     "radio-xray":      {"name": "XRAY.fm",   "stream": "https://listen.xray.fm/stream"},
-    # South / National
+    # DC / National
     "radio-gamut":     {"name": "The Gamut",  "stream": "https://playerservices.streamtheworld.com/api/livestream-redirect/WWFDAM.mp3"},
     "radio-weta":      {"name": "WETA Classical", "stream": "https://weta.streamguys1.com/wetaclassical-icy"},
     "radio-npr":       {"name": "NPR",       "stream": "http://npr-ice.streamguys1.com/live.mp3"},
 }
+
+ENV_FILE = "/etc/asterisk/deepgram.env"
+DEEPGRAM_VOICE = "aura-2-asteria-en"
+SPEAKER_PID_FILE = "/tmp/radio-speaker.pid"
+
+
+def load_api_key():
+    """Load DEEPGRAM_API_KEY from env or operator .env file."""
+    key = os.environ.get("DEEPGRAM_API_KEY")
+    if key:
+        return key
+    try:
+        with open(ENV_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("DEEPGRAM_API_KEY="):
+                    return line.split("=", 1)[1].strip()
+    except FileNotFoundError:
+        pass
+    return None
 
 
 def get_icy_metadata(url, timeout=5):
@@ -112,6 +134,21 @@ def get_wnyc():
 API_FETCHERS = {"kexp": get_kexp, "bff": get_bff, "wnyc": get_wnyc}
 
 
+def format_track_info(info):
+    """Format track info as 'Song, by Artist' when possible."""
+    if not info:
+        return None
+    # ICY metadata is typically "Artist - Song"
+    if " - " in info:
+        parts = info.split(" - ", 1)
+        if len(parts) == 2:
+            artist, song = parts[0].strip(), parts[1].strip()
+            if artist and song:
+                return f"{song}, by {artist}"
+    # Already formatted (from APIs) or no separator
+    return info
+
+
 def get_now_playing(station_id):
     station = STATIONS.get(station_id)
     if not station:
@@ -125,12 +162,38 @@ def get_now_playing(station_id):
     # Fall back to ICY metadata
     stream = station.get("stream")
     if stream:
-        return get_icy_metadata(stream)
+        raw = get_icy_metadata(stream)
+        return format_track_info(raw)
     return None
 
 
-def generate_tts(text, output_path):
-    """Generate 8kHz 16-bit mono wav using espeak-ng + ffmpeg."""
+def generate_tts_deepgram(text, output_path):
+    """Generate 8kHz 16-bit mono wav using Deepgram Aura 2."""
+    api_key = load_api_key()
+    if not api_key:
+        raise RuntimeError("No Deepgram API key")
+
+    url = (
+        f"https://api.deepgram.com/v1/speak"
+        f"?model={DEEPGRAM_VOICE}&encoding=linear16&sample_rate=8000&container=none"
+    )
+    body = json.dumps({"text": text}).encode()
+    req = urllib.request.Request(url, data=body, headers={
+        "Authorization": f"Token {api_key}",
+        "Content-Type": "application/json",
+    })
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        pcm_data = resp.read()
+
+    with wave.open(output_path, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(pcm_data)
+
+
+def generate_tts_espeak(text, output_path):
+    """Fallback: generate 8kHz 16-bit mono wav using espeak-ng + ffmpeg."""
     espeak = subprocess.Popen(
         ["espeak-ng", "--stdout", "-v", "en-us", "-s", "150", text],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -139,6 +202,34 @@ def generate_tts(text, output_path):
         ["ffmpeg", "-y", "-i", "pipe:0", "-ar", "8000", "-ac", "1", output_path],
         stdin=espeak.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         check=True,
+    )
+
+
+def generate_tts(text, output_path):
+    """Generate TTS wav. Uses Deepgram, falls back to espeak-ng."""
+    try:
+        generate_tts_deepgram(text, output_path)
+    except Exception:
+        generate_tts_espeak(text, output_path)
+
+
+def speaker_is_active():
+    """Check if direct stream is playing on laptop speakers."""
+    try:
+        with open(SPEAKER_PID_FILE) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)  # check if process exists
+        return True
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        return False
+
+
+def play_on_speaker(wav_path):
+    """Play wav on laptop speakers (runs aplay as hazel)."""
+    subprocess.Popen(
+        ["sudo", "-u", "hazel", "XDG_RUNTIME_DIR=/run/user/1000",
+         "aplay", "-q", wav_path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
 
@@ -158,6 +249,8 @@ def main():
 
     if tts_output:
         generate_tts(text, tts_output)
+        if speaker_is_active():
+            play_on_speaker(tts_output)
 
 
 if __name__ == "__main__":
