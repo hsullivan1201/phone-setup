@@ -16,29 +16,29 @@ import wave
 
 STATIONS = {
     # Canada
-    "radio-cism":      {"name": "CISM",      "stream": "http://stream03.ustream.ca:8000/cism128.mp3"},
-    "radio-ciut":      {"name": "CIUT",      "stream": "http://ice23.securenetsystems.net/CIUT"},
-    "radio-ckdu":      {"name": "CKDU",      "stream": "https://archive1.ckdu.ca:9750/ckdu_1_on_air_high.mp3"},
+    "radio-cism":      {"name": "CISM",           "ext": "700", "stream": "http://stream03.ustream.ca:8000/cism128.mp3"},
+    "radio-ciut":      {"name": "CIUT",           "ext": "701", "stream": "http://ice23.securenetsystems.net/CIUT"},
+    "radio-ckdu":      {"name": "CKDU",           "ext": "702", "stream": "https://archive1.ckdu.ca:9750/ckdu_1_on_air_high.mp3"},
     # Northeast US
-    "radio-wfmu":      {"name": "WFMU",      "stream": "http://stream0.wfmu.org/freeform-128k"},
-    "radio-newsounds": {"name": "New Sounds", "stream": "https://q2stream.wqxr.org/q2"},
-    "radio-wnyc":      {"name": "WNYC",      "api": "wnyc"},
-    "radio-wmbr":      {"name": "WMBR",      "stream": "https://wmbr.org:8002/hi"},
-    "radio-wbur":      {"name": "WBUR",      "stream": "https://fm909.wbur.org/wbur_www"},
+    "radio-wfmu":      {"name": "WFMU",           "ext": "703", "stream": "http://stream0.wfmu.org/freeform-128k"},
+    "radio-newsounds": {"name": "New Sounds",     "ext": "704", "stream": "https://q2stream.wqxr.org/q2"},
+    "radio-wnyc":      {"name": "WNYC",           "ext": "705", "api": "wnyc"},
+    "radio-wmbr":      {"name": "WMBR",           "ext": "706", "stream": "https://wmbr.org:8002/hi"},
+    "radio-wbur":      {"name": "WBUR",           "ext": "707", "stream": "https://fm909.wbur.org/wbur_www"},
     # Midwest
-    "radio-chirp":     {"name": "CHIRP",     "stream": "http://peridot.streamguys.com:5180/backup"},
-    "radio-wbez":      {"name": "WBEZ",      "stream": "https://stream.wbez.org/wbez128.mp3"},
+    "radio-chirp":     {"name": "CHIRP",          "ext": "708", "stream": "http://peridot.streamguys.com:5180/backup"},
+    "radio-wbez":      {"name": "WBEZ",           "ext": "709", "stream": "https://stream.wbez.org/wbez128.mp3"},
     # West Coast
-    "radio-kexp":      {"name": "KEXP",      "stream": "http://live-mp3-128.kexp.org/kexp128.mp3", "api": "kexp"},
-    "radio-kalx":      {"name": "KALX",      "stream": "https://stream.kalx.berkeley.edu:8443/kalx-128.mp3"},
-    "radio-bff":       {"name": "BFF.fm",    "stream": "http://stream.bff.fm/1/mp3.mp3", "api": "bff"},
-    "radio-kqed":      {"name": "KQED",      "stream": "https://streams.kqed.org/kqedradio"},
-    "radio-kboo":      {"name": "KBOO",      "stream": "http://listen.kboo.fm:8000/high"},
-    "radio-xray":      {"name": "XRAY.fm",   "stream": "https://listen.xray.fm/stream"},
+    "radio-kexp":      {"name": "KEXP",           "ext": "710", "stream": "http://live-mp3-128.kexp.org/kexp128.mp3", "api": "kexp"},
+    "radio-kalx":      {"name": "KALX",           "ext": "711", "stream": "https://stream.kalx.berkeley.edu:8443/kalx-128.mp3"},
+    "radio-bff":       {"name": "BFF.fm",         "ext": "712", "stream": "http://stream.bff.fm/1/mp3.mp3", "api": "bff"},
+    "radio-kqed":      {"name": "KQED",           "ext": "713", "stream": "https://streams.kqed.org/kqedradio"},
+    "radio-kboo":      {"name": "KBOO",           "ext": "714", "stream": "http://listen.kboo.fm:8000/high"},
+    "radio-xray":      {"name": "XRAY.fm",        "ext": "715", "stream": "https://listen.xray.fm/stream"},
     # DC / National
-    "radio-gamut":     {"name": "The Gamut",  "stream": "https://playerservices.streamtheworld.com/api/livestream-redirect/WWFDAM.mp3"},
-    "radio-weta":      {"name": "WETA Classical", "stream": "https://weta.streamguys1.com/wetaclassical-icy"},
-    "radio-npr":       {"name": "NPR",       "stream": "http://npr-ice.streamguys1.com/live.mp3"},
+    "radio-gamut":     {"name": "The Gamut",       "ext": "716", "stream": "https://playerservices.streamtheworld.com/api/livestream-redirect/WWFDAM.mp3"},
+    "radio-weta":      {"name": "WETA Classical",  "ext": "717", "stream": "https://weta.streamguys1.com/wetaclassical-icy"},
+    "radio-npr":       {"name": "NPR",             "ext": "718", "stream": "http://npr-ice.streamguys1.com/live.mp3"},
 }
 
 ENV_FILE = "/etc/asterisk/deepgram.env"
@@ -254,8 +254,10 @@ def main():
 
     station = STATIONS.get(station_id)
     station_name = station["name"] if station else station_id
+    station_ext = station.get("ext", "") if station else ""
+    label = f"{station_name}, {station_ext}" if station_ext else station_name
     info = get_now_playing(station_id)
-    text = f"Now playing on {station_name}: {info}" if info else f"{station_name}. No track information available"
+    text = f"Now playing on {label}: {info}" if info else f"{label}. No track information available"
     print(text)
 
     if tts_output:
