@@ -123,7 +123,15 @@ For pjsip.conf changes: `sudo asterisk -rx "pjsip reload res_pjsip.so"`
 
 **Silence on all or some extensions after restart/sleep**: The HT701 loses RTP sync when Asterisk restarts or the ThinkPad sleeps. SIP signaling still works (calls connect, Asterisk sees them) but audio is silently dropped. Can affect native Asterisk audio, AudioSocket agents, or both. Fix: power cycle the HT701 (unplug power, wait 5s, plug back in). Web UI reboot is not sufficient.
 
-**Laptop suspend disabled**: The ThinkPad must stay awake for Asterisk and the agents. Suspend/hibernate is masked and lid close is set to ignore (screen blanks but system stays up).
+**PJSIP qualify keepalive**: The AOR for endpoint 100 has `qualify_frequency=30`, which sends SIP OPTIONS pings to the HT701 every 30 seconds. This serves two purposes: (1) keeps the NAT/RTP path alive so the ATA doesn't lose sync during idle periods, and (2) lets Asterisk detect when the ATA becomes unreachable (contact status changes from `Reachable` to `Unavailable`). Check status with `sudo asterisk -rx 'pjsip show aors'`.
+
+## Operations
+
+### Laptop as a server
+
+The ThinkPad runs Asterisk, dnsmasq, baresip, and up to 6 Python agent processes (operator + 5 agents). It is a server and must stay powered on with the network interface active at all times.
+
+**Suspend is disabled.** Closing the lid blanks the screen (DPMS) but the system stays awake. This was necessary because the HT701 loses RTP sync every time the laptop sleeps, requiring a physical power cycle of the ATA to recover.
 
 ```bash
 # What was changed
@@ -132,9 +140,58 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 
 # To re-enable suspend later
 sudo systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target
-# Then revert logind.conf lines back to #HandleLidSwitch=suspend etc. and run:
-# sudo systemctl restart systemd-logind
+# Then in /etc/systemd/logind.conf, revert to:
+#   #HandleLidSwitch=suspend
+#   #HandleLidSwitchExternalPower=suspend
+# and run: sudo systemctl restart systemd-logind
 ```
+
+### Power and thermal considerations
+
+With the lid closed and suspend disabled, the ThinkPad idles at low power but never enters deep sleep states. Keep in mind:
+
+- **Always on AC power.** The laptop should stay plugged in. Running 24/7 on battery will drain it and eventually shut down, which is the same as a sleep event from the HT701's perspective.
+- **Ventilation.** The lid is closed, so the built-in keyboard area doesn't help with airflow. The ThinkPad's bottom vents do the heavy lifting. Don't set it on a blanket or pillow — a hard flat surface or a laptop stand with clearance underneath is ideal.
+- **Battery longevity.** Lithium-ion batteries degrade faster when held at 100% charge continuously. ThinkPads support charge thresholds via `tlp` or the BIOS — setting a stop threshold of 80% (`START_CHARGE_THRESH_BAT0=75`, `STOP_CHARGE_THRESH_BAT0=80` in `/etc/tlp.conf`) will extend battery lifespan significantly. Not critical, but worth doing if this setup runs for months.
+
+### Resource usage
+
+When idle (no active calls), the system is very light:
+
+| Component | Idle footprint |
+|-----------|---------------|
+| Asterisk | ~30 MB RSS, near-zero CPU |
+| dnsmasq | ~2 MB RSS |
+| baresip | ~15 MB RSS |
+| Each Python agent | ~80-100 MB RSS (Python runtime + Pipecat + Silero VAD model) |
+| **Total (6 agents)** | **~550-650 MB RSS** |
+
+During a call, a single agent spikes briefly for Silero VAD inference (~5ms per 30ms audio chunk on CPU) and for network I/O to Deepgram and Anthropic APIs. CPU usage during a call is under 10% of one core. Multiple simultaneous calls are possible but unlikely on a single handset.
+
+The Silero VAD model (~2 MB) is loaded per-call and unloaded when the call ends. There's no GPU usage — everything runs on CPU.
+
+### Reducing memory footprint
+
+The 6 agent processes account for most of the memory. Options to reduce this:
+
+- **On-demand agents.** Instead of running all 6 agents at all times, start them only when called and stop them after the call ends. This would require a launcher script or systemd socket activation. Tradeoff: ~1-2 seconds of cold-start latency on the first call while Python loads and the VAD model initializes.
+- **Single multiplexed process.** Run one Python process that handles all extensions, selecting the system prompt and voice based on the AudioSocket UUID. This would share the Python runtime, Pipecat framework, and Silero model across all agents, cutting memory from ~600 MB to ~150 MB. Tradeoff: more complex code, a crash takes down all agents, and you lose per-agent process isolation.
+- **Swap.** If memory pressure becomes an issue, ensure swap is configured. The idle agents' memory will page out naturally since it's not accessed between calls.
+
+### Network resilience
+
+The ThinkPad-to-HT701 link is a direct Ethernet cable (`192.168.10.0/24`), so there's no router, switch, or Wi-Fi to fail. The main fragility is the HT701's RTP stack:
+
+- The `qualify_frequency=30` keepalive (see above) reduces but may not eliminate RTP sync loss.
+- If audio disappears, the first thing to try is always a HT701 power cycle.
+- Asterisk itself is rock-solid — it doesn't need restarting. Avoid `core restart` unless absolutely necessary (e.g., loading a new module). Use `dialplan reload` for extensions.conf changes and `pjsip reload res_pjsip.so` for pjsip.conf changes.
+
+### Future improvements
+
+- **Replace the HT701.** The Grandstream HT801 or HT802 are direct replacements with actively maintained firmware and a more reliable RTP stack. This is the single biggest improvement for stability.
+- **Systemd services for agents.** Currently the agents are started manually. Wrapping them in systemd user services would give auto-restart on crash, proper logging via journald, and clean startup on boot.
+- **Monitoring.** A simple health check script that calls `pjsip show contacts` and verifies the HT701 is `Reachable`, then optionally alerts (LED, buzzer, or notification) when it goes `Unavailable`.
+- **TLP for battery health.** Install `tlp` and configure charge thresholds to protect the battery during long-term always-on operation.
 
 ## Useful commands
 
