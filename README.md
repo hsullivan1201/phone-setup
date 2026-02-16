@@ -63,7 +63,7 @@ Each routes through AudioSocket to a standalone Python agent in `~/agents/`.
 | 717 | WETA Classical 90.9 | Washington DC |
 | 718 | NPR | National |
 
-DTMF while listening: **4** = now playing, **5** = speakers on, **6** = speakers off.
+DTMF while listening: **4** = now playing, **5** = speakers on (ConfBridge/baresip), **6** = all speakers off, **7** = speakers on (direct stream).
 
 ## Config files
 
@@ -84,11 +84,18 @@ Each station uses a ConfBridge so the handset and room speakers can share one st
 3. The handset joins the same bridge as `handset_user` (marked -- bridge tears down when you hang up).
 4. Pressing 5 originates a call to baresip (ext 150), which joins as `speaker_user`.
 
-### Room speakers (DTMF 5/6)
+### Room speakers (DTMF 5/6/7)
 
-While listening to a radio station, press **5** to pipe audio to the ThinkPad's speakers. Press **6** to turn them off. This lets you put the handset down and listen through the room.
+While listening to a radio station, there are two ways to play audio through the ThinkPad's speakers:
 
-How it works: pressing 5 triggers the `[speaker-control]` context, which originates a SIP call to endpoint 150 (baresip). baresip auto-answers, joins the same ConfBridge as `speaker_user`, and routes audio to PulseAudio's default output. Pressing 6 soft-hangs-up the baresip channel.
+- **5** — Pipe ConfBridge audio to speakers via baresip. Audio passes through the phone system at 8kHz.
+- **7** — Play the station's original webstream directly on the speakers via ffplay. Full quality, bypasses the phone system entirely.
+
+Press **6** to stop all speaker output (kills both baresip and direct stream). Hanging up also stops the direct stream automatically.
+
+**DTMF 5 (ConfBridge/baresip):** Pressing 5 triggers the `[speaker-control]` context, which originates a SIP call to endpoint 150 (baresip). baresip auto-answers, joins the same ConfBridge as `speaker_user`, and routes audio to PulseAudio's default output.
+
+**DTMF 7 (direct stream):** Pressing 7 triggers the `[speaker-stream]` context, which runs `/usr/local/bin/radio-speaker start <bridge>`. This script launches `ffplay` as the `hazel` user (via sudoers) to play the station's webstream directly through PulseAudio. A PID file at `/tmp/radio-speaker.pid` tracks the process for cleanup.
 
 **baresip** is a headless SIP softphone running as a systemd user service on the ThinkPad.
 
@@ -121,6 +128,7 @@ For pjsip.conf changes: `sudo asterisk -rx "pjsip reload res_pjsip.so"`
 | Script | Deployed to | What |
 |--------|-------------|------|
 | `now-playing` | `/usr/local/bin/now-playing` | Fetch track info (ICY metadata + KEXP/BFF/WNYC APIs), generate TTS wav |
+| `radio-speaker` | `/usr/local/bin/radio-speaker` | Direct webstream playback on laptop speakers via ffplay (`start <station>` / `stop`) |
 | `stream-decode` | `/usr/local/bin/stream-decode` | ffmpeg wrapper: any audio stream -> 8kHz slin16 for Asterisk |
 | `ring-phone` | `/usr/local/bin/ring-phone` | Ring the Nortel |
 | `alarm` | `/usr/local/bin/alarm` | Ring phone + play alarm clip |
