@@ -84,13 +84,27 @@ Each station uses a ConfBridge so the handset and room speakers can share one st
 3. The handset joins the same bridge as `handset_user` (marked -- bridge tears down when you hang up).
 4. Pressing 5 originates a call to baresip (ext 150), which joins as `speaker_user`.
 
-### Room speakers
+### Room speakers (DTMF 5/6)
 
-baresip runs as a systemd user service on the ThinkPad, registered as SIP endpoint 150. It auto-answers and routes audio to PulseAudio's default output.
+While listening to a radio station, press **5** to pipe audio to the ThinkPad's speakers. Press **6** to turn them off. This lets you put the handset down and listen through the room.
+
+How it works: pressing 5 triggers the `[speaker-control]` context, which originates a SIP call to endpoint 150 (baresip). baresip auto-answers, joins the same ConfBridge as `speaker_user`, and routes audio to PulseAudio's default output. Pressing 6 soft-hangs-up the baresip channel.
+
+**baresip** is a headless SIP softphone running as a systemd user service on the ThinkPad.
+
+| | |
+|---|---|
+| Service | `~/.config/systemd/user/baresip.service` |
+| Config dir | `~/.baresip/` |
+| SIP account | `150@127.0.0.1` (password: `speakerpass`, auto-answer) |
+| Audio | PulseAudio default output (`audio_player pulse,default`) |
+| Codec | G.711 (ulaw/alaw) via `g711.so` |
+| PJSIP endpoint | `150` in `pjsip.conf` (matched by `direct_media=no`) |
 
 ```bash
-systemctl --user status baresip
-systemctl --user restart baresip
+systemctl --user status baresip      # check if running
+systemctl --user restart baresip     # restart after config changes
+systemctl --user enable baresip      # auto-start on login (already enabled)
 ```
 
 ## Deploy
