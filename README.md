@@ -99,9 +99,9 @@ Press **6** to stop all speaker output (kills both baresip and direct stream). H
 
 **DTMF 7 (direct stream):** Pressing 7 triggers the `[speaker-stream]` context, which runs `/usr/local/bin/radio-speaker start <bridge>`. The script uses `setsid` to launch `ffplay` as the `hazel` user in a new session (so it survives Asterisk's process cleanup), playing the station's webstream directly through PulseAudio.
 
-**DTMF 4 (now playing) on speakers:** When ffplay is running (detected via `pgrep -x ffplay`), pressing 4 also plays the TTS announcement on the laptop speakers using `paplay`. This uses Deepgram Aura 2 for natural-sounding voice (falls back to espeak-ng if Deepgram is unavailable).
+**DTMF 4 (now playing) on speakers:** When ffplay is running (detected via `pgrep -x ffplay`), pressing 4 also plays the TTS announcement on the laptop speakers using `paplay`. The music pauses (SIGSTOP) during the announcement and resumes (SIGCONT) after. TTS uses Deepgram Aura 2 (`aura-2-asteria-en`) for natural-sounding voice, with espeak-ng as fallback.
 
-**Note on audio from Asterisk `System()`:** Asterisk runs as the `asterisk` user, which has no access to PulseAudio. Scripts use `sudo -u hazel` with `XDG_RUNTIME_DIR=/run/user/1000` to run audio commands under the desktop user's session. Authorized by `/etc/sudoers.d/radio-speaker` (`SETENV` + `NOPASSWD` for `/usr/bin/ffplay` and `/usr/bin/paplay`).
+**Note on audio from Asterisk `System()`:** Asterisk runs as the `asterisk` user, which has no access to PulseAudio. Scripts use `sudo -u hazel` with `XDG_RUNTIME_DIR=/run/user/1000` to run audio commands under the desktop user's session. Authorized by `/etc/sudoers.d/radio-speaker` (`SETENV` + `NOPASSWD` for `/usr/bin/ffplay`, `/usr/bin/paplay`, and `/usr/bin/pkill`).
 
 **Gotcha — backgrounding processes from `System()`:** Asterisk's `System()` kills backgrounded child processes when the parent shell exits. The fix is `setsid` — it creates a new process session that Asterisk can't clean up. The `radio-speaker` script calls `System()` synchronously (no `&` in the dialplan); `setsid` handles the detach internally. Note: PID file writes after `setsid ... &` are unreliable because the script may be killed before the write. The `now-playing` script detects ffplay via `pgrep` instead of relying on a PID file.
 

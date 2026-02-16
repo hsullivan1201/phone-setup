@@ -252,8 +252,10 @@ def main():
     if len(sys.argv) >= 4 and sys.argv[2] == "--tts":
         tts_output = sys.argv[3]
 
+    station = STATIONS.get(station_id)
+    station_name = station["name"] if station else station_id
     info = get_now_playing(station_id)
-    text = f"Now playing: {info}" if info else "No track information available"
+    text = f"Now playing on {station_name}: {info}" if info else f"{station_name}. No track information available"
     print(text)
 
     if tts_output:
