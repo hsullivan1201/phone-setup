@@ -1,0 +1,5 @@
+#!/bin/bash
+# Decode any audio stream (MP3, AAC, etc.) to raw slin16 for Asterisk MusicOnHold.
+# Usage: stream-decode <url>
+exec ffmpeg -nostdin -hide_banner -loglevel error -i "$1" \
+    -f s16le -ar 8000 -ac 1 -acodec pcm_s16le pipe:1

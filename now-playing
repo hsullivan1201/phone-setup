@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Fetch now-playing info for a radio station.
+
+Usage:
+    now-playing <bridge-name>              Print current track to stdout
+    now-playing <bridge-name> --tts FILE   Also generate TTS wav for Asterisk
+"""
+
+import json
+import struct
+import subprocess
+import sys
+import urllib.request
+
+STATIONS = {
+    # Canada
+    "radio-cism":      {"name": "CISM",      "stream": "http://stream03.ustream.ca:8000/cism128.mp3"},
+    "radio-ciut":      {"name": "CIUT",      "stream": "http://ice23.securenetsystems.net/CIUT"},
+    "radio-ckdu":      {"name": "CKDU",      "stream": "https://archive1.ckdu.ca:9750/ckdu_1_on_air_high.mp3"},
+    # Northeast US
+    "radio-wfmu":      {"name": "WFMU",      "stream": "http://stream0.wfmu.org/freeform-128k"},
+    "radio-newsounds": {"name": "New Sounds", "stream": "https://q2stream.wqxr.org/q2"},
+    "radio-wnyc":      {"name": "WNYC",      "api": "wnyc"},
+    "radio-wmbr":      {"name": "WMBR",      "stream": "https://wmbr.org:8002/hi"},
+    "radio-wbur":      {"name": "WBUR",      "stream": "https://fm909.wbur.org/wbur_www"},
+    # Midwest
+    "radio-chirp":     {"name": "CHIRP",     "stream": "http://peridot.streamguys.com:5180/backup"},
+    "radio-wbez":      {"name": "WBEZ",      "stream": "https://stream.wbez.org/wbez128.mp3"},
+    # West Coast
+    "radio-kexp":      {"name": "KEXP",      "stream": "http://live-mp3-128.kexp.org/kexp128.mp3", "api": "kexp"},
+    "radio-kalx":      {"name": "KALX",      "stream": "https://stream.kalx.berkeley.edu:8443/kalx-128.mp3"},
+    "radio-bff":       {"name": "BFF.fm",    "stream": "http://stream.bff.fm/1/mp3.mp3", "api": "bff"},
+    "radio-kqed":      {"name": "KQED",      "stream": "https://streams.kqed.org/kqedradio"},
+    "radio-kboo":      {"name": "KBOO",      "stream": "http://listen.kboo.fm:8000/high"},
+    "radio-xray":      {"name": "XRAY.fm",   "stream": "https://listen.xray.fm/stream"},
+    # South / National
+    "radio-gamut":     {"name": "The Gamut",  "stream": "https://playerservices.streamtheworld.com/api/livestream-redirect/WWFDAM.mp3"},
+    "radio-weta":      {"name": "WETA Classical", "stream": "https://weta.streamguys1.com/wetaclassical-icy"},
+    "radio-npr":       {"name": "NPR",       "stream": "http://npr-ice.streamguys1.com/live.mp3"},
+}
+
+
+def get_icy_metadata(url, timeout=5):
+    """Fetch StreamTitle from ICY metadata embedded in an audio stream."""
+    try:
+        req = urllib.request.Request(url, headers={
+            "Icy-MetaData": "1",
+            "User-Agent": "Mozilla/5.0",
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            metaint = int(resp.headers.get("icy-metaint", 0))
+            if not metaint:
+                return None
+            resp.read(metaint)
+            meta_len = struct.unpack("B", resp.read(1))[0] * 16
+            if not meta_len:
+                return None
+            meta = resp.read(meta_len).decode("utf-8", errors="replace").rstrip("\x00")
+            for part in meta.split(";"):
+                part = part.strip()
+                if part.startswith("StreamTitle="):
+                    title = part.split("=", 1)[1].strip("'\"")
+                    if title and title.strip() and title.lower() not in ("unknown", " "):
+                        return title
+    except Exception:
+        pass
+    return None
+
+
+def get_kexp():
+    try:
+        url = "https://api.kexp.org/v2/plays/?limit=1&format=json"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+            if data.get("results"):
+                p = data["results"][0]
+                artist, song = p.get("artist", ""), p.get("song", "")
+                if artist and song:
+                    return f"{song} by {artist}"
+                return artist or song or None
+    except Exception:
+        pass
+    return None
+
+
+def get_bff():
+    try:
+        url = "https://data.bff.fm/api/data/tracks/now.text"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            text = resp.read().decode("utf-8").strip()
+            return text or None
+    except Exception:
+        pass
+    return None
+
+
+def get_wnyc():
+    try:
+        url = "https://www.wnyc.org/api/v1/whats_on/"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+            show = data.get("wnyc-fm939", {}).get("current_show", {})
+            return show.get("title") or None
+    except Exception:
+        pass
+    return None
+
+
+API_FETCHERS = {"kexp": get_kexp, "bff": get_bff, "wnyc": get_wnyc}
+
+
+def get_now_playing(station_id):
+    station = STATIONS.get(station_id)
+    if not station:
+        return None
+    # Try API first
+    api = station.get("api")
+    if api and api in API_FETCHERS:
+        result = API_FETCHERS[api]()
+        if result:
+            return result
+    # Fall back to ICY metadata
+    stream = station.get("stream")
+    if stream:
+        return get_icy_metadata(stream)
+    return None
+
+
+def generate_tts(text, output_path):
+    """Generate 8kHz 16-bit mono wav using espeak-ng + ffmpeg."""
+    espeak = subprocess.Popen(
+        ["espeak-ng", "--stdout", "-v", "en-us", "-s", "150", text],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", "pipe:0", "-ar", "8000", "-ac", "1", output_path],
+        stdin=espeak.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        check=True,
+    )
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} <bridge-name> [--tts output.wav]", file=sys.stderr)
+        sys.exit(1)
+
+    station_id = sys.argv[1]
+    tts_output = None
+    if len(sys.argv) >= 4 and sys.argv[2] == "--tts":
+        tts_output = sys.argv[3]
+
+    info = get_now_playing(station_id)
+    text = f"Now playing: {info}" if info else "No track information available"
+    print(text)
+
+    if tts_output:
+        generate_tts(text, tts_output)
+
+
+if __name__ == "__main__":
+    main()
