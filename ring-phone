@@ -1,0 +1,4 @@
+#!/bin/bash
+# Ring the Nortel phone. When answered, plays music on hold.
+# Usage: ring-phone
+sudo asterisk -rx "channel originate PJSIP/100 extension ring100@incoming"
