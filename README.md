@@ -143,8 +143,8 @@ For confbridge.conf changes (menu, profiles): `sudo asterisk -rx "module reload 
 
 | Script | Deployed to | What |
 |--------|-------------|------|
-| `now-playing` | `/usr/local/bin/now-playing` | Fetch track info (ICY metadata + KEXP/BFF/WNYC APIs), generate TTS wav via Deepgram Aura 2 (falls back to espeak-ng). Also announces on laptop speakers when direct stream is active. |
-| `radio-speaker` | `/usr/local/bin/radio-speaker` | Direct webstream playback on laptop speakers via ffplay (`start <station>` / `stop`) |
+| `now-playing` | `/usr/local/bin/now-playing` | Fetch track info (ICY metadata + KEXP/BFF/WNYC/CKDU APIs), generate TTS wav via Deepgram Aura 2 (falls back to espeak-ng). Also announces on laptop speakers when direct stream is active. |
+| `radio-speaker` | `/usr/local/bin/radio-speaker` | Direct webstream playback on laptop speakers via ffplay (`start <station>` / `stop`). Cleanup uses `pkill -x ffplay` (not PID file). |
 | `stream-decode` | `/usr/local/bin/stream-decode` | ffmpeg wrapper: any audio stream -> 8kHz slin16 for Asterisk |
 | `ring-phone` | `/usr/local/bin/ring-phone` | Ring the Nortel |
 | `alarm` | `/usr/local/bin/alarm` | Ring phone + play alarm clip |
@@ -155,13 +155,20 @@ For confbridge.conf changes (menu, profiles): `sudo asterisk -rx "module reload 
 - DTMF: RFC2833
 - Dial plan: `{0|xxx|*x+}` -- 0 dials instantly, 3-digit codes dial on last digit, `*` prefixes for ConfBridge DTMF
 - Call progress tones: French (440Hz)
+- Use Random RTP Port: Yes (prevents RTP state reuse across calls)
+- Use Random SIP Port: No
+- Enable SIP OPTIONS Keep Alive: Yes (interval 30s, max lost 3)
+- Unregister on Reboot: Yes (clean SIP teardown when ATA restarts)
+- NAT Traversal: Keep-Alive
 - Config changes sometimes need a power cycle, not just Apply
 
 ## Troubleshooting
 
-**Silence on all or some extensions after restart/sleep**: The HT701 loses RTP sync when Asterisk restarts or the ThinkPad sleeps. SIP signaling still works (calls connect, Asterisk sees them) but audio is silently dropped. Can affect native Asterisk audio, AudioSocket agents, or both. Fix: power cycle the HT701 (unplug power, wait 5s, plug back in). Web UI reboot is not sufficient. Note: `dialplan reload` can also trigger this — any Asterisk reload risks an RTP desync.
+**Silence on all or some extensions after restart/sleep**: The HT701 loses RTP sync when Asterisk restarts, the ThinkPad sleeps, or after a fast redial. SIP signaling still works (calls connect, Asterisk sees them) but audio is silently dropped. Can affect native Asterisk audio, AudioSocket agents, or both. Fix: power cycle the HT701 (unplug power, wait 5s, plug back in). Web UI reboot is not sufficient. Note: `dialplan reload` can also trigger this — any Asterisk reload risks an RTP desync. Mitigations: "Use Random RTP Port" on the HT701 (avoids stale RTP port reuse), `rtp_timeout=30` in pjsip.conf (detects dead RTP and fires hangup cleanup within 30s), and "Unregister on Reboot" / "SIP OPTIONS Keep Alive" on the HT701 for cleaner SIP state.
 
 **PJSIP qualify keepalive**: The AOR for endpoint 100 has `qualify_frequency=30`, which sends SIP OPTIONS pings to the HT701 every 30 seconds. This serves two purposes: (1) keeps the NAT/RTP path alive so the ATA doesn't lose sync during idle periods, and (2) lets Asterisk detect when the ATA becomes unreachable (contact status changes from `Reachable` to `Unavailable`). Check status with `sudo asterisk -rx 'pjsip show aors'`.
+
+**RTP timeout**: Endpoint 100 has `rtp_timeout=30` — if no RTP is received for 30 seconds (e.g., HT701 power cycled mid-call), Asterisk hangs up the channel. This fires the `h` extension which cleans up ffplay speaker processes.
 
 ## Operations
 
