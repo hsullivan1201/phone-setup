@@ -130,14 +130,21 @@ systemctl --user enable baresip      # auto-start on login (already enabled)
 
 ## Deploy
 
+Asterisk config:
 ```bash
 sudo cp extensions.conf pjsip.conf confbridge.conf musiconhold.conf /etc/asterisk/
 sudo asterisk -rx "dialplan reload"
 ```
 
-For pjsip.conf changes: `sudo asterisk -rx "pjsip reload res_pjsip.so"`
+For pjsip.conf changes: `sudo asterisk -rx "module reload res_pjsip"`
 
 For confbridge.conf changes (menu, profiles): `sudo asterisk -rx "module reload app_confbridge"` — `dialplan reload` alone won't pick up ConfBridge menu changes.
+
+Helper scripts:
+```bash
+sudo cp now-playing radio-speaker stream-decode ring-phone alarm /usr/local/bin/
+sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone,alarm}
+```
 
 ## Helper scripts
 
