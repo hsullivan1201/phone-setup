@@ -1,0 +1,55 @@
+#!/bin/bash
+# Direct webstream playback on laptop speakers via ffplay.
+# Usage: radio-speaker start <bridge-name>
+#        radio-speaker stop
+
+PID_FILE="/tmp/radio-speaker.pid"
+
+declare -A STREAMS=(
+    [radio-cism]="http://stream03.ustream.ca:8000/cism128.mp3"
+    [radio-ciut]="http://ice23.securenetsystems.net/CIUT"
+    [radio-ckdu]="https://archive1.ckdu.ca:9750/ckdu_1_on_air_high.mp3"
+    [radio-wfmu]="http://stream0.wfmu.org/freeform-128k"
+    [radio-newsounds]="https://q2stream.wqxr.org/q2"
+    [radio-wnyc]="https://fm939.wnyc.org/wnycfm"
+    [radio-wmbr]="https://wmbr.org:8002/hi"
+    [radio-wbur]="https://fm909.wbur.org/wbur_www"
+    [radio-chirp]="http://peridot.streamguys.com:5180/backup"
+    [radio-wbez]="https://stream.wbez.org/wbez128.mp3"
+    [radio-kexp]="http://live-mp3-128.kexp.org/kexp128.mp3"
+    [radio-kalx]="https://stream.kalx.berkeley.edu:8443/kalx-128.mp3"
+    [radio-bff]="http://stream.bff.fm/1/mp3.mp3"
+    [radio-kqed]="https://streams.kqed.org/kqedradio"
+    [radio-kboo]="http://listen.kboo.fm:8000/high"
+    [radio-xray]="https://listen.xray.fm/stream"
+    [radio-gamut]="https://playerservices.streamtheworld.com/api/livestream-redirect/WWFDAM.mp3"
+    [radio-weta]="https://weta.streamguys1.com/wetaclassical-icy"
+    [radio-npr]="http://npr-ice.streamguys1.com/live.mp3"
+)
+
+stop_playback() {
+    pkill -x ffplay 2>/dev/null
+    rm -f "$PID_FILE"
+}
+
+case "$1" in
+    start)
+        station="$2"
+        url="${STREAMS[$station]}"
+        if [[ -z "$url" ]]; then
+            exit 1
+        fi
+        stop_playback
+        # setsid launches ffplay in a new session so it survives parent exit.
+        # We can't easily get setsid's child PID, so write setsid's own PID.
+        setsid sudo -u hazel XDG_RUNTIME_DIR=/run/user/1000 ffplay -nodisp -loglevel quiet "$url" < /dev/null > /dev/null 2>&1 &
+        echo $! > "$PID_FILE"
+        ;;
+    stop)
+        stop_playback
+        ;;
+    *)
+        echo "Usage: radio-speaker start <station> | stop" >&2
+        exit 1
+        ;;
+esac
