@@ -218,9 +218,9 @@ def speaker_is_active():
     try:
         with open(SPEAKER_PID_FILE) as f:
             pid = int(f.read().strip())
-        os.kill(pid, 0)  # check if process exists
-        return True
-    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        # PID is the sudo process (root-owned), so check /proc instead of kill()
+        return os.path.exists(f"/proc/{pid}")
+    except (FileNotFoundError, ValueError):
         return False
 
 
