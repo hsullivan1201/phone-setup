@@ -36,6 +36,7 @@ Nortel analog phone -> Grandstream HT701 ATA -> Asterisk 23.2.2 on ThinkPad (Arc
 | 202 | Librarian | 9202 |
 | 203 | French Tutor | 9203 |
 | 204 | Daily Briefing | 9204 |
+| 205 | DJ Cool (Music Concierge) | 9205 |
 
 Each routes through AudioSocket to a standalone Python agent in `~/agents/`.
 
@@ -65,6 +66,31 @@ Each routes through AudioSocket to a standalone Python agent in `~/agents/`.
 
 DTMF while listening: **4** = now playing, **5** = speakers on (ConfBridge/baresip), **6** = all speakers off, **7** = speakers on (direct stream).
 
+### Spotify (730, 8xx)
+
+Dial **730** to start Spotify on the laptop speakers (pick music from the app). Dial an **8xx** extension to start a specific playlist. All audio plays through the laptop speakers at full quality via librespot.
+
+DTMF while listening: **1** = previous, **2** = pause/resume, **3** = next, **4** = now playing (TTS), **6** = stop.
+
+Playlist mappings are in `spotify-playlists.conf` (deployed to `/etc/asterisk/spotify-playlists.conf`):
+
+| Ext | Playlist |
+|-----|----------|
+| 800 | radio 2 |
+| 801 | 140+ |
+| 802 | noise |
+| 803 | folksy |
+| 804 | Country |
+| 805 | Actually good Classical |
+| 806 | songs I like from radio |
+| 807 | RAP |
+| 808 | Québécois music |
+| 809 | Cool beans |
+| 810 | My playlist #24 |
+| 811 | tunes |
+
+Alternatively, dial **205** for DJ Cool — a voice AI music concierge that searches Spotify, takes requests, and controls playback by conversation.
+
 ## Config files
 
 | File | Purpose |
@@ -73,6 +99,7 @@ DTMF while listening: **4** = now playing, **5** = speakers on (ConfBridge/bares
 | `pjsip.conf` | SIP endpoints: 100 (HT701 phone), 150 (baresip speaker) |
 | `confbridge.conf` | ConfBridge profiles for radio + DTMF menu |
 | `musiconhold.conf` | AAC stream decoding for CIUT and WETA (via ffmpeg) |
+| `spotify-playlists.conf` | Maps 8xx extensions to Spotify playlist URIs |
 | `dnsmasq.conf` | DHCP/DNS for the HT701 |
 | `/etc/asterisk/deepgram.env` | Deepgram API key for now-playing TTS (readable by asterisk user only) |
 | `/etc/sudoers.d/radio-speaker` | Lets asterisk user run ffplay/aplay as hazel for speaker audio |
@@ -152,6 +179,7 @@ sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone
 |--------|-------------|------|
 | `now-playing` | `/usr/local/bin/now-playing` | Fetch track info (ICY metadata + KEXP/BFF/WNYC/CKDU APIs), generate TTS wav via Deepgram Aura 2 (falls back to espeak-ng). Also announces on laptop speakers when direct stream is active. |
 | `radio-speaker` | `/usr/local/bin/radio-speaker` | Direct webstream playback on laptop speakers via ffplay (`start <station>` / `stop`). Cleanup uses `pkill -x ffplay` (not PID file). |
+| `spotify-connect` | `/usr/local/bin/spotify-connect` | Librespot lifecycle + Spotify Web API control (start, stop, play, pause, next, prev, now-playing). Used by 730/8xx dialplan and DJ Cool agent. |
 | `stream-decode` | `/usr/local/bin/stream-decode` | ffmpeg wrapper: any audio stream -> 8kHz slin16 for Asterisk |
 | `ring-phone` | `/usr/local/bin/ring-phone` | Ring the Nortel |
 | `alarm` | `/usr/local/bin/alarm` | Ring phone + play alarm clip |
