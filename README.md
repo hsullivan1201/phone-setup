@@ -1,6 +1,6 @@
 # Phone Setup
 
-Asterisk configuration for a private PBX built around a vintage Nortel analog phone. The phone acts as a terminal into the local network — it can make calls, stream internet radio, control Spotify, talk to AI agents, and interface with other devices on the LAN. Source of truth for all Asterisk config — edit here, deploy to `/etc/asterisk/`.
+Asterisk configuration for a private PBX built around a vintage Nortel analog phone. The phone acts as a terminal into the local network; it can make calls, stream internet radio, control Spotify, talk to AI agents, and interface with other devices on the LAN. Source of truth for all Asterisk config, edit here, deploy to `/etc/asterisk/`.
 
 ## Hardware
 
