@@ -138,7 +138,7 @@ Press **6** to stop all speaker output (kills both baresip and direct stream). H
 
 **Gotcha — file permissions for `asterisk` user:** The asterisk user cannot traverse `/home/hazel/`, so any files it needs (like API keys) must be placed somewhere accessible. The Deepgram API key lives at `/etc/asterisk/deepgram.env` (owner: asterisk, mode: 600). If the key in `~/operator/.env` is rotated, update the copy: `grep DEEPGRAM_API_KEY ~/operator/.env | sudo tee /etc/asterisk/deepgram.env`
 
-**baresip** is a headless SIP softphone running as a systemd user service on the ThinkPad.
+**baresip** is a headless SIP softphone running as a systemd user service on the ThinkPad. It's used to connect to the phone via confBridge
 
 | | |
 |---|---|
