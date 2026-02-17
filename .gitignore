@@ -1,0 +1,6 @@
+.claude/
+*.env
+*.secret
+*.key
+*.pem
+token*.json
