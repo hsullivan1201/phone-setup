@@ -1,0 +1,4 @@
+#!/bin/bash
+# Ring the phone and play the alarm clip.
+# Usage: alarm (or triggered by cron at 8:30 AM)
+sudo asterisk -rx "channel originate PJSIP/100 extension alarm@incoming"
