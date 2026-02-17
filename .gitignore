@@ -4,4 +4,5 @@
 *.key
 *.pem
 token*.json
+spotify-phase*.md
 spotify/*.md
