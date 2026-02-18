@@ -2,6 +2,8 @@
 
 Asterisk configuration for a private PBX built around a vintage Nortel analog phone. The phone acts as a terminal into the local network; it can make calls, stream internet radio, control Spotify, talk to AI agents, and interface with other devices on the LAN. Source of truth for all Asterisk config, edit here, deploy to `/etc/asterisk/`.
 
+The AI voice agents (operator, chef, librarian, DJ Cool, etc.) live in a separate repo: [hsullivan1201/operator](https://github.com/hsullivan1201/operator). This repo handles the Asterisk side (dialplan, SIP, radio streams, Spotify integration) and that one handles the voice agent side (Pipecat pipelines, LLM prompts, tools).
+
 ## Hardware
 
 Nortel analog phone -> Grandstream HT701 ATA -> Asterisk 23.2.2 on ThinkPad (Arch Linux)
