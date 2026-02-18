@@ -266,6 +266,30 @@ The ThinkPad-to-HT701 link is a direct Ethernet cable (`192.168.10.0/24`), so th
 - If audio disappears, the first thing to try is always a HT701 power cycle.
 - Asterisk itself is rock-solid — it doesn't need restarting. Avoid `core restart` unless absolutely necessary (e.g., loading a new module). Use `dialplan reload` for extensions.conf changes and `pjsip reload res_pjsip.so` for pjsip.conf changes.
 
+### Call logging
+
+All AI agents (operator + all 2xx agents) write a per-call log to `~/logs/calls/`. Each log file is named `{agent}-{date}-{time}-{uuid8}.log` and contains three sections:
+
+**Events** — written in real time during the call:
+```
+[15:01:02] [USER] Hi. Can you tell me about extension seven thirty?
+[15:02:23] [TOOL] transfer_call({"extension": "730"})
+[15:02:23] [TOOL→] Transferring to extension 730.
+```
+
+**Transcript** — reconstructed from `context.messages` at call end. Shows the cleaned conversation (speaker labels `BOT:`/`USER:`) and tool use blocks.
+
+**Summary** — end time, duration, turn count.
+
+The logging module is `~/operator/call_log.py`. It exposes two things:
+
+- `CallLog(agent_name, call_uuid)` — creates the log file and writes events via `log_greeting()`, `log_user()`, `log_tool_call()`, and `finalize(context.messages)`.
+- `make_transcript_logger(call_log)` — returns a Pipecat `FrameProcessor` that intercepts `TranscriptionFrame` to log user speech in real time (before the LLM sees it). Inserted into the pipeline between STT and context aggregation.
+
+`finalize()` is called from a `try/finally` block around `runner.run(task)`, so it always runs when the pipeline exits.
+
+**Pipecat quirk**: `AnthropicLLMContext._restructure_from_openai_messages()` changes the system message role from `"system"` to `"user"` in-place on the first LLM call when it's the only message. The `finalize()` method guards against this by skipping any user-role string message longer than 500 characters (STT transcriptions are never that long).
+
 ### Future improvements
 
 - **Replace the HT701.** The Grandstream HT801 or HT802 are direct replacements with actively maintained firmware and a more reliable RTP stack. This is the single biggest improvement for stability.
