@@ -1,0 +1,4 @@
+#!/bin/bash
+# Ring the phone and connect directly to the Daily Briefing agent (204).
+# Intended for a systemd timer (weekday mornings, etc.).
+sudo asterisk -rx "channel originate PJSIP/100 extension 204@internal"

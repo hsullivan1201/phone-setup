@@ -40,7 +40,14 @@ Nortel analog phone -> Grandstream HT701 ATA -> Asterisk 23.2.2 on ThinkPad (Arc
 | 204 | Daily Briefing | 9204 |
 | 205 | DJ Cool (Music Concierge) | 9205 |
 
-Each routes through AudioSocket to a standalone Python agent in `~/agents/`.
+Each routes through AudioSocket to a standalone Python agent in `~/operator/agents/`.
+The 2xx agents are now launched on demand by `agent-ondemand` and stopped when
+the call ends, so they do not stay resident when idle.
+
+Daily Briefing (204) supports an optional preference file at
+`~/.config/infoline/briefing-profile.txt` (read by the `hazel` user). Keep it
+short and specific, for example: topics to prioritize, topics to avoid, and
+desired tone/length.
 
 ### Radio (7xx) -- 19 stations
 
@@ -171,8 +178,8 @@ For confbridge.conf changes (menu, profiles): `sudo asterisk -rx "module reload 
 
 Helper scripts:
 ```bash
-sudo cp now-playing radio-speaker stream-decode ring-phone alarm /usr/local/bin/
-sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone,alarm}
+sudo cp now-playing radio-speaker stream-decode ring-phone alarm morning-briefing agent-ondemand /usr/local/bin/
+sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone,alarm,morning-briefing,agent-ondemand}
 ```
 
 ## Helper scripts
@@ -182,9 +189,45 @@ sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone
 | `now-playing` | `/usr/local/bin/now-playing` | Fetch track info (ICY metadata + KEXP/BFF/WNYC/CKDU APIs), generate TTS wav via Deepgram Aura 2 (falls back to espeak-ng). Also announces on laptop speakers when direct stream is active. |
 | `radio-speaker` | `/usr/local/bin/radio-speaker` | Direct webstream playback on laptop speakers via ffplay (`start <station>` / `stop`). Cleanup uses `pkill -x ffplay` (not PID file). |
 | `spotify-connect` | `/usr/local/bin/spotify-connect` | Librespot lifecycle + Spotify Web API control (start, stop, play, pause, next, prev, now-playing). Used by 730/8xx dialplan and DJ Cool agent. |
+| `agent-ondemand` | `/usr/local/bin/agent-ondemand` | Starts/stops specialist AI agents (200-205) on demand so those Python processes are only up during active calls. |
 | `stream-decode` | `/usr/local/bin/stream-decode` | ffmpeg wrapper: any audio stream -> 8kHz slin16 for Asterisk |
 | `ring-phone` | `/usr/local/bin/ring-phone` | Ring the Nortel |
 | `alarm` | `/usr/local/bin/alarm` | Ring phone + play alarm clip |
+| `morning-briefing` | `/usr/local/bin/morning-briefing` | Ring phone and connect straight to extension 204 (Daily Briefing) for scheduled wake-up briefings. |
+
+Dialplan startup uses `sudo -u hazel` for `agent-ondemand` and `spotify-connect`.
+If those commands prompt for a password, add matching `NOPASSWD` entries for the
+`asterisk` user in sudoers.
+
+Example user timer for weekday morning briefing:
+
+```ini
+# ~/.config/systemd/user/morning-briefing.service
+[Unit]
+Description=Morning phone briefing
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/morning-briefing
+```
+
+```ini
+# ~/.config/systemd/user/morning-briefing.timer
+[Unit]
+Description=Weekday morning briefing at 8:00 AM
+
+[Timer]
+OnCalendar=Mon..Fri 08:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now morning-briefing.timer
+```
 
 ## HT701 config (via web UI)
 
@@ -207,11 +250,22 @@ sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone
 
 **RTP timeout**: Endpoint 100 has `rtp_timeout=30` — if no RTP is received for 30 seconds (e.g., HT701 power cycled mid-call), Asterisk hangs up the channel. This fires the `h` extension which cleans up ffplay speaker processes.
 
+**Spotify device missing (`DJ Cool` says "device not found")**: Run this one-liner to hard-reset librespot and re-register the `Telephone` device:
+
+```bash
+sudo -u hazel bash -lc 'XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/local/bin/spotify-connect stop >/dev/null 2>&1 || true; pkill -x librespot >/dev/null 2>&1 || true; sleep 1; XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/local/bin/spotify-connect start'
+```
+
+After that, call `205` again (or dial `730`/`8xx`) and playback should recover.
+
 ## Operations
 
 ### Laptop as a server
 
-The ThinkPad runs Asterisk, dnsmasq, baresip, and up to 6 Python agent processes (operator + 5 agents). It is a server and must stay powered on with the network interface active at all times.
+The ThinkPad runs Asterisk, dnsmasq, baresip, and Python voice agents. The
+operator is always on; the 2xx specialist agents are started on demand and
+stopped after each call. It is a server and must stay powered on with the
+network interface active at all times.
 
 **Suspend is disabled.** Closing the lid blanks the screen (DPMS) but the system stays awake. This was necessary because the HT701 loses RTP sync every time the laptop sleeps, requiring a physical power cycle of the ATA to recover.
 
@@ -245,20 +299,20 @@ When idle (no active calls), the system is very light:
 | Asterisk | ~30 MB RSS, near-zero CPU |
 | dnsmasq | ~2 MB RSS |
 | baresip | ~15 MB RSS |
-| Each Python agent | ~80-100 MB RSS (Python runtime + Pipecat + Silero VAD model) |
-| **Total (6 agents)** | **~550-650 MB RSS** |
+| Operator process (always on) | ~80-100 MB RSS |
+| Specialist 2xx agent process | ~80-100 MB RSS each, only while active |
+| **Typical idle total** | **~130-170 MB RSS** |
 
 During a call, a single agent spikes briefly for Silero VAD inference (~5ms per 30ms audio chunk on CPU) and for network I/O to Deepgram and Anthropic APIs. CPU usage during a call is under 10% of one core. Multiple simultaneous calls are possible but unlikely on a single handset.
 
 The Silero VAD model (~2 MB) is loaded per-call and unloaded when the call ends. There's no GPU usage — everything runs on CPU.
 
-### Reducing memory footprint
+### Further memory options
 
-The 6 agent processes account for most of the memory. Options to reduce this:
+On-demand 2xx launch is now active. If you want to reduce footprint further:
 
-- **On-demand agents.** Instead of running all 6 agents at all times, start them only when called and stop them after the call ends. This would require a launcher script or systemd socket activation. Tradeoff: ~1-2 seconds of cold-start latency on the first call while Python loads and the VAD model initializes.
-- **Single multiplexed process.** Run one Python process that handles all extensions, selecting the system prompt and voice based on the AudioSocket UUID. This would share the Python runtime, Pipecat framework, and Silero model across all agents, cutting memory from ~600 MB to ~150 MB. Tradeoff: more complex code, a crash takes down all agents, and you lose per-agent process isolation.
-- **Swap.** If memory pressure becomes an issue, ensure swap is configured. The idle agents' memory will page out naturally since it's not accessed between calls.
+- **Single multiplexed process.** Run one Python process that handles all 2xx extensions, selecting prompt/voice by extension. This shares runtime and VAD model across agents, further reducing memory. Tradeoff: bigger code refactor and less fault isolation.
+- **Swap.** If memory pressure becomes an issue, ensure swap is configured. Rarely used pages will move out naturally.
 
 ### Network resilience
 
@@ -279,23 +333,28 @@ All AI agents (operator + all 2xx agents) write a per-call log to `~/logs/calls/
 [15:02:23] [TOOL→] Transferring to extension 730.
 ```
 
-**Transcript** — reconstructed from `context.messages` at call end. Shows the cleaned conversation (speaker labels `BOT:`/`USER:`) and tool use blocks.
+**Transcript** — assembled in real time from frame processors (`TranscriptionFrame`,
+LLM/TTS output, and tool callbacks). This stays complete even when prompt
+history is trimmed for token control.
 
 **Summary** — end time, duration, turn count.
 
-The logging module is `~/operator/call_log.py`. It exposes two things:
+The logging module is `~/operator/call_log.py`. It exposes:
 
-- `CallLog(agent_name, call_uuid)` — creates the log file and writes events via `log_greeting()`, `log_user()`, `log_tool_call()`, and `finalize(context.messages)`.
-- `make_transcript_logger(call_log)` — returns a Pipecat `FrameProcessor` that intercepts `TranscriptionFrame` to log user speech in real time (before the LLM sees it). Inserted into the pipeline between STT and context aggregation.
+- `CallLog(agent_name, call_uuid)` — creates the log file and writes events via `log_greeting()`, `log_assistant()`, `log_user()`, `log_tool_call()`, and `finalize()`.
+- `make_transcript_logger(call_log)` — logs finalized user speech from `TranscriptionFrame`.
+- `make_assistant_logger(call_log)` — logs assistant responses from LLM/TTS frames in real time.
+- `make_context_window_guard(context, max_messages=12)` — bounds prompt history while preserving the system message.
 
 `finalize()` is called from a `try/finally` block around `runner.run(task)`, so it always runs when the pipeline exits.
 
-**Pipecat quirk**: `AnthropicLLMContext._restructure_from_openai_messages()` changes the system message role from `"system"` to `"user"` in-place on the first LLM call when it's the only message. The `finalize()` method guards against this by skipping any user-role string message longer than 500 characters (STT transcriptions are never that long).
+`finalize()` still accepts `context.messages` for best-effort backfill, but
+normal operation no longer depends on context-role reconstruction behavior.
 
 ### Future improvements
 
 - **Replace the HT701.** The Grandstream HT801 or HT802 are direct replacements with actively maintained firmware and a more reliable RTP stack. This is the single biggest improvement for stability.
-- **Systemd services for agents.** Currently the agents are started manually. Wrapping them in systemd user services would give auto-restart on crash, proper logging via journald, and clean startup on boot.
+- **Systemd hardening for agent lifecycle.** Keep operator as a persistent user service and use socket/template services for 2xx agents to avoid any shell/sudo dependency in dialplan startup.
 - **Monitoring.** A simple health check script that calls `pjsip show contacts` and verifies the HT701 is `Reachable`, then optionally alerts (LED, buzzer, or notification) when it goes `Unavailable`.
 - **TLP for battery health.** Install `tlp` and configure charge thresholds to protect the battery during long-term always-on operation.
 

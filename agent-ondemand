@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Starts/stops specialist AI agents (200-205) on demand.
+# Intended to be called by Asterisk dialplan via:
+#   sudo -u hazel /usr/local/bin/agent-ondemand start 200
+#   sudo -u hazel /usr/local/bin/agent-ondemand stop 200
+
+usage() {
+  echo "Usage: $0 {start|stop|restart|status} {200|201|202|203|204|205}" >&2
+  exit 2
+}
+
+[[ $# -eq 2 ]] || usage
+
+ACTION="$1"
+EXT="$2"
+
+declare -A AGENT_DIR=(
+  [200]="chef"
+  [201]="funfacts"
+  [202]="librarian"
+  [203]="french"
+  [204]="briefing"
+  [205]="music"
+)
+
+declare -A AGENT_PORT=(
+  [200]=9200
+  [201]=9201
+  [202]=9202
+  [203]=9203
+  [204]=9204
+  [205]=9205
+)
+
+AGENT="${AGENT_DIR[$EXT]:-}"
+PORT="${AGENT_PORT[$EXT]:-}"
+[[ -n "${AGENT}" && -n "${PORT}" ]] || usage
+
+USER_HOME="$(getent passwd "$(id -un)" | cut -d: -f6)"
+USER_UID="$(id -u)"
+BASE_DIR="${USER_HOME}/operator"
+PYTHON_BIN="${BASE_DIR}/.venv/bin/python"
+AGENT_SCRIPT="${BASE_DIR}/agents/${AGENT}/agent.py"
+
+PID_DIR="/tmp/infoline-agents"
+PID_FILE="${PID_DIR}/${EXT}.pid"
+LOG_DIR="${USER_HOME}/logs/agents"
+LOG_FILE="${LOG_DIR}/${AGENT}.log"
+
+mkdir -p "${PID_DIR}" "${LOG_DIR}"
+
+# Agents launched from Asterisk often inherit a minimal environment.
+# Setting these helps subprocesses that use PulseAudio or the user bus.
+if [[ -d "/run/user/${USER_UID}" ]]; then
+  export XDG_RUNTIME_DIR="/run/user/${USER_UID}"
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+fi
+
+is_pid_alive() {
+  local pid="$1"
+  kill -0 "${pid}" 2>/dev/null
+}
+
+is_port_listening() {
+  ss -ltnH "( sport = :${PORT} )" 2>/dev/null | grep -q "LISTEN"
+}
+
+find_existing_pid() {
+  local pid=""
+  local cmdline=""
+  local cwd=""
+
+  if [[ -f "${PID_FILE}" ]]; then
+    pid="$(<"${PID_FILE}")"
+    if [[ -n "${pid}" ]] && is_pid_alive "${pid}"; then
+      echo "${pid}"
+      return 0
+    fi
+    rm -f "${PID_FILE}"
+  fi
+
+  # Fallback for manually launched agents without pid file.
+  pid="$(pgrep -f "${BASE_DIR}/agents/${AGENT}/agent.py" | head -n1 || true)"
+  if [[ -z "${pid}" ]]; then
+    pid="$(pgrep -f "agents/${AGENT}/agent.py" | head -n1 || true)"
+  fi
+  if [[ -n "${pid}" ]] && is_pid_alive "${pid}"; then
+    echo "${pid}"
+    return 0
+  fi
+
+  # Last-resort detection for agents started from their own directory:
+  #   cd ~/operator/agents/<name> && python agent.py
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    is_pid_alive "${pid}" || continue
+
+    cmdline="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
+    cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
+
+    if [[ "${cmdline}" == *"/agents/${AGENT}/agent.py"* || "${cmdline}" == *"agents/${AGENT}/agent.py"* ]]; then
+      echo "${pid}"
+      return 0
+    fi
+    if [[ "${cwd}" == "${BASE_DIR}/agents/${AGENT}" && "${cmdline}" == *"agent.py"* ]]; then
+      echo "${pid}"
+      return 0
+    fi
+  done < <(pgrep -f "python.*agent.py" || true)
+
+  return 1
+}
+
+wait_for_exit() {
+  local pid="$1"
+  local i
+  for i in $(seq 1 50); do
+    if ! is_pid_alive "${pid}"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+stop_pid() {
+  local pid="$1"
+  if ! is_pid_alive "${pid}"; then
+    return 0
+  fi
+  kill "${pid}" 2>/dev/null || true
+  if ! wait_for_exit "${pid}"; then
+    kill -9 "${pid}" 2>/dev/null || true
+  fi
+}
+
+start_agent() {
+  local pid=""
+
+  # If the port is already listening, treat the agent as up even if we don't
+  # have a PID yet (e.g., manually started in another shell style).
+  if is_port_listening; then
+    if pid="$(find_existing_pid)"; then
+      echo "${pid}" > "${PID_FILE}"
+      echo "agent ${EXT} already running (pid ${pid})"
+    else
+      echo "agent ${EXT} already running (listener on port ${PORT})"
+    fi
+    return 0
+  fi
+
+  if pid="$(find_existing_pid)"; then
+    echo "${pid}" > "${PID_FILE}"
+    if is_port_listening; then
+      echo "agent ${EXT} already running (pid ${pid})"
+      return 0
+    fi
+    # Process exists but not listening: restart it.
+    stop_pid "${pid}"
+    rm -f "${PID_FILE}"
+  fi
+
+  if [[ ! -x "${PYTHON_BIN}" ]]; then
+    echo "python not found: ${PYTHON_BIN}" >&2
+    return 1
+  fi
+  if [[ ! -f "${AGENT_SCRIPT}" ]]; then
+    echo "agent script missing: ${AGENT_SCRIPT}" >&2
+    return 1
+  fi
+
+  nohup "${PYTHON_BIN}" "${AGENT_SCRIPT}" >> "${LOG_FILE}" 2>&1 &
+  pid="$!"
+  echo "${pid}" > "${PID_FILE}"
+
+  local i
+  for i in $(seq 1 80); do
+    if is_port_listening; then
+      echo "agent ${EXT} started (pid ${pid}, port ${PORT})"
+      return 0
+    fi
+    if ! is_pid_alive "${pid}"; then
+      # Could have raced with an already-running listener.
+      if is_port_listening; then
+        echo "agent ${EXT} already running (listener on port ${PORT})"
+        return 0
+      fi
+      break
+    fi
+    sleep 0.1
+  done
+
+  echo "agent ${EXT} failed to start (port ${PORT} never opened)" >&2
+  stop_pid "${pid}"
+  rm -f "${PID_FILE}"
+  return 1
+}
+
+stop_agent() {
+  local pid=""
+  if pid="$(find_existing_pid)"; then
+    stop_pid "${pid}"
+  fi
+  rm -f "${PID_FILE}"
+
+  if is_port_listening; then
+    echo "agent ${EXT} still has a listener on ${PORT}" >&2
+    return 1
+  fi
+
+  echo "agent ${EXT} stopped"
+  return 0
+}
+
+status_agent() {
+  local pid=""
+  local listening="no"
+  if is_port_listening; then
+    listening="yes"
+  fi
+  if pid="$(find_existing_pid)"; then
+    echo "agent ${EXT}: running pid=${pid}, listening=${listening}, port=${PORT}"
+  else
+    echo "agent ${EXT}: stopped, listening=${listening}, port=${PORT}"
+  fi
+}
+
+case "${ACTION}" in
+  start)
+    start_agent
+    ;;
+  stop)
+    stop_agent
+    ;;
+  restart)
+    stop_agent || true
+    start_agent
+    ;;
+  status)
+    status_agent
+    ;;
+  *)
+    usage
+    ;;
+esac

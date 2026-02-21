@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# spotify-auth — One-time OAuth flow to get a Spotify refresh token.
+# Usage: spotify-auth CLIENT_ID CLIENT_SECRET
+#
+# 1. Opens the Spotify authorization URL in your browser
+# 2. Starts a temporary HTTP server on port 8888 to catch the redirect
+# 3. Exchanges the auth code for tokens
+# 4. Saves credentials to ~/.config/spotify-telephone/config
+
+set -euo pipefail
+
+REDIRECT_URI="http://127.0.0.1:8888/callback"
+CONFIG_DIR="/home/hazel/.config/spotify-telephone"
+CONFIG="$CONFIG_DIR/config"
+SCOPES="user-modify-playback-state user-read-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative"
+
+if [[ $# -lt 2 ]]; then
+    echo "Usage: $0 CLIENT_ID CLIENT_SECRET"
+    exit 1
+fi
+
+CLIENT_ID="$1"
+CLIENT_SECRET="$2"
+
+mkdir -p "$CONFIG_DIR"
+
+# Build authorization URL
+ENCODED_SCOPES=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$SCOPES'))")
+AUTH_URL="https://accounts.spotify.com/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$REDIRECT_URI'))")&scope=$ENCODED_SCOPES"
+
+echo "Opening browser for Spotify authorization..."
+echo ""
+echo "If the browser doesn't open, visit this URL manually:"
+echo "$AUTH_URL"
+echo ""
+
+# Open browser
+xdg-open "$AUTH_URL" 2>/dev/null || true
+
+# Start a temporary server to catch the callback
+echo "Waiting for callback on port 8888..."
+CODE=$(python3 -c "
+import http.server, urllib.parse, sys
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        query = urllib.parse.urlparse(self.path).query
+        params = urllib.parse.parse_qs(query)
+        if 'code' in params:
+            code = params['code'][0]
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'Authorization successful! You can close this tab.')
+            print(code, file=sys.stderr)
+            raise KeyboardInterrupt
+        elif 'error' in params:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b'Authorization denied.')
+            print('ERROR:' + params['error'][0], file=sys.stderr)
+            raise KeyboardInterrupt
+    def log_message(self, *args): pass
+
+try:
+    server = http.server.HTTPServer(('127.0.0.1', 8888), Handler)
+    server.handle_request()
+except KeyboardInterrupt:
+    pass
+" 2>&1 >/dev/null)
+
+if [[ "$CODE" == ERROR:* ]]; then
+    echo "Authorization failed: ${CODE#ERROR:}"
+    exit 1
+fi
+
+echo "Got authorization code, exchanging for tokens..."
+
+# Exchange code for tokens
+RESPONSE=$(curl -s -X POST https://accounts.spotify.com/api/token \
+    -d grant_type=authorization_code \
+    -d "code=$CODE" \
+    -d "redirect_uri=$REDIRECT_URI" \
+    -u "$CLIENT_ID:$CLIENT_SECRET")
+
+REFRESH_TOKEN=$(echo "$RESPONSE" | jq -r '.refresh_token // empty')
+ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token // empty')
+
+if [[ -z "$REFRESH_TOKEN" ]]; then
+    echo "ERROR: Failed to get refresh token"
+    echo "$RESPONSE" | jq .
+    exit 1
+fi
+
+# Save config
+cat > "$CONFIG" <<EOF
+SPOTIFY_CLIENT_ID=$CLIENT_ID
+SPOTIFY_CLIENT_SECRET=$CLIENT_SECRET
+SPOTIFY_REFRESH_TOKEN=$REFRESH_TOKEN
+SPOTIFY_DEVICE_NAME=Telephone
+EOF
+chmod 600 "$CONFIG"
+
+echo ""
+echo "Saved credentials to $CONFIG"
+echo "Refresh token: ${REFRESH_TOKEN:0:20}..."
+echo ""
+echo "Testing API access..."
+
+# Quick test — get user profile
+PROFILE=$(curl -s "https://api.spotify.com/v1/me" \
+    -H "Authorization: Bearer $ACCESS_TOKEN")
+DISPLAY_NAME=$(echo "$PROFILE" | jq -r '.display_name // "Unknown"')
+echo "Logged in as: $DISPLAY_NAME"
+echo ""
+echo "Done! You can now use spotify-connect."
