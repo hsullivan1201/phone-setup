@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""HTTP server exposing now-playing and call status for the InfoLine panel.
+
+GET /spotify          → {"track": "Song, by Artist"} or {"track": null}
+GET /radio/<bridge>  → {"track": "Song, by Artist"} or {"track": null}
+GET /status          → {"type": "idle"} | {"type": "call", "ext": "205"} | {"type": "radio", "bridge": "radio-kexp"}
+"""
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import json
+import subprocess
+import threading
+import time
+
+PORT = 8765
+CACHE_TTL_SPOTIFY = 15
+CACHE_TTL_RADIO   = 60
+
+REAL_EXTENSIONS = (
+    {str(i) for i in range(100, 106)}
+    | {str(i) for i in range(200, 206)}
+    | {str(i) for i in range(700, 719)}
+    | {str(i) for i in range(730, 812)}
+    | {'0'}
+)
+
+RADIO_BRIDGES = {
+    'radio-cism', 'radio-ciut', 'radio-ckdu', 'radio-wfmu', 'radio-newsounds',
+    'radio-wnyc', 'radio-wmbr', 'radio-wbur', 'radio-chirp', 'radio-wbez',
+    'radio-kexp', 'radio-kalx', 'radio-bff', 'radio-kqed', 'radio-kboo',
+    'radio-xray', 'radio-gamut', 'radio-weta', 'radio-npr',
+}
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
+_cache      = {}
+_cache_lock = threading.Lock()
+
+def cache_get(key):
+    with _cache_lock:
+        if key in _cache:
+            val, exp = _cache[key]
+            if time.time() < exp:
+                return val, True
+    return None, False
+
+def cache_set(key, val, ttl):
+    with _cache_lock:
+        _cache[key] = (val, time.time() + ttl)
+
+# ── Fetchers ──────────────────────────────────────────────────────────────────
+def spotify_now_playing():
+    cached, hit = cache_get('spotify')
+    if hit:
+        return cached
+    try:
+        r = subprocess.run(
+            ['/usr/local/bin/spotify-connect', 'now-playing'],
+            capture_output=True, text=True, timeout=10,
+        )
+        text = r.stdout.strip()
+        parts = text.split(", by ", 1) if text and text != "Nothing playing" else None
+        result = {"track": parts[0], "artist": parts[1]} if parts and len(parts) == 2 else ({"track": text, "artist": None} if parts else None)
+    except Exception:
+        result = None
+    cache_set('spotify', result, CACHE_TTL_SPOTIFY)
+    return result
+
+def radio_now_playing(bridge):
+    key = f'radio:{bridge}'
+    cached, hit = cache_get(key)
+    if hit:
+        return cached
+    try:
+        r = subprocess.run(
+            ['/usr/local/bin/now-playing', bridge],
+            capture_output=True, text=True, timeout=10,
+        )
+        text = r.stdout.strip()
+        if '. ' in text:
+            track = text.split('. ', 1)[1]
+            result = None if 'No track information' in track else track
+        else:
+            result = None
+    except Exception:
+        result = None
+    cache_set(key, result, CACHE_TTL_RADIO)
+    return result
+
+def current_status():
+    """Query Asterisk CLI for active call or radio bridge."""
+    # Check ConfBridges first (radio)
+    try:
+        r = subprocess.run(
+            ['sudo', '-n', 'asterisk', '-rx', 'confbridge list'],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            for bridge in RADIO_BRIDGES:
+                if bridge in line:
+                    return {'type': 'radio', 'bridge': bridge}
+    except Exception:
+        pass
+
+    # Check active channels (calls)
+    try:
+        r = subprocess.run(
+            ['sudo', '-n', 'asterisk', '-rx', 'core show channels'],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            # Location column: "ext@context:priority"
+            for token in line.split():
+                if '@' in token:
+                    ext = token.split('@')[0]
+                    if ext in REAL_EXTENSIONS:
+                        return {'type': 'call', 'ext': ext}
+    except Exception:
+        pass
+
+    return {'type': 'idle'}
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/spotify':
+            result = spotify_now_playing()
+            body = json.dumps(result if result else {'track': None, 'artist': None})
+        elif self.path.startswith('/radio/'):
+            bridge = self.path[7:]
+            body = json.dumps({'track': radio_now_playing(bridge)})
+        elif self.path == '/status':
+            body = json.dumps(current_status())
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(body.encode())
+
+    def log_message(self, *args):
+        pass
+
+if __name__ == '__main__':
+    print(f'now-playing server on :{PORT}', flush=True)
+    HTTPServer(('', PORT), Handler).serve_forever()

@@ -178,8 +178,9 @@ For confbridge.conf changes (menu, profiles): `sudo asterisk -rx "module reload 
 
 Helper scripts:
 ```bash
-sudo cp now-playing radio-speaker stream-decode ring-phone alarm morning-briefing agent-ondemand /usr/local/bin/
-sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone,alarm,morning-briefing,agent-ondemand}
+sudo cp now-playing radio-speaker stream-decode ring-phone alarm morning-briefing agent-ondemand nowplaying-server /usr/local/bin/
+sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone,alarm,morning-briefing,agent-ondemand,nowplaying-server}
+sudo systemctl restart nowplaying-server
 ```
 
 ## Helper scripts
@@ -187,6 +188,7 @@ sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone
 | Script | Deployed to | What |
 |--------|-------------|------|
 | `now-playing` | `/usr/local/bin/now-playing` | Fetch track info (ICY metadata + KEXP/BFF/WNYC/CKDU APIs), generate TTS wav via Deepgram Aura 2 (falls back to espeak-ng). Also announces on laptop speakers when direct stream is active. |
+| `nowplaying-server` | `/usr/local/bin/nowplaying-server` | HTTP server (port 8765) polled by the InfoLine panel. Exposes `/spotify` (track + artist), `/radio/<bridge>` (track), and `/status` (current call/radio state via Asterisk CLI). Runs as `hazel` via systemd (`nowplaying-server.service`). |
 | `radio-speaker` | `/usr/local/bin/radio-speaker` | Direct webstream playback on laptop speakers via ffplay (`start <station>` / `stop`). Cleanup uses `pkill -x ffplay` (not PID file). |
 | `spotify-connect` | `/usr/local/bin/spotify-connect` | Librespot lifecycle + Spotify Web API control (start, stop, play, pause, next, prev, now-playing). Used by 730/8xx dialplan and DJ Cool agent. |
 | `agent-ondemand` | `/usr/local/bin/agent-ondemand` | Starts/stops specialist AI agents (200-205) on demand so those Python processes are only up during active calls. |
@@ -194,6 +196,7 @@ sudo chmod +x /usr/local/bin/{now-playing,radio-speaker,stream-decode,ring-phone
 | `ring-phone` | `/usr/local/bin/ring-phone` | Ring the Nortel |
 | `alarm` | `/usr/local/bin/alarm` | Ring phone + play alarm clip |
 | `morning-briefing` | `/usr/local/bin/morning-briefing` | Ring phone and connect straight to extension 204 (Daily Briefing) for scheduled wake-up briefings. |
+| `panel6.py` | `~/panel6.py` on infoline.local | InfoLine panel script (Raspberry Pi). Connects to AMI for live call events, polls `nowplaying-server` for track info. Runs as a systemd service (`panel6.service`) on the Pi. |
 
 Dialplan startup uses `sudo -u hazel` for `agent-ondemand` and `spotify-connect`.
 If those commands prompt for a password, add matching `NOPASSWD` entries for the
@@ -357,6 +360,41 @@ normal operation no longer depends on context-role reconstruction behavior.
 - **Systemd hardening for agent lifecycle.** Keep operator as a persistent user service and use socket/template services for 2xx agents to avoid any shell/sudo dependency in dialplan startup.
 - **Monitoring.** A simple health check script that calls `pjsip show contacts` and verifies the HT701 is `Reachable`, then optionally alerts (LED, buzzer, or notification) when it goes `Unavailable`.
 - **TLP for battery health.** Install `tlp` and configure charge thresholds to protect the battery during long-term always-on operation.
+
+## InfoLine panel (infoline.local / Raspberry Pi)
+
+A Raspberry Pi connected to a 4-line I²C LCD, a rotary encoder, and several GPIO switches. It connects to the ThinkPad over the LAN and shows call/radio/Spotify status in real time.
+
+- **Script:** `~/panel6.py` on the Pi
+- **Communication:** AMI (Asterisk Manager Interface) on port 5038 — same connection the ThinkPad uses for dialplan events
+- **Now-playing:** polls `nowplaying-server` (see below) on lines 3-4 of the LCD
+
+**Display logic:**
+- Idle: clock + "C&P TELEPHONE / INFOLINE"
+- Regular call (1xx, 2xx non-Spotify): "EXT xxx / CALL IN PROGRESS"
+- Spotify call (205, 730–811): "EXT xxx / SPOTIFY" + now-playing on lines 3-4 (polled every 15s, blank if nothing playing)
+- Radio (700–718): "RADIO / Station Name" + now-playing on lines 3-4 (polled every 45s, blank if no metadata)
+- ConfBridge leave or hangup: returns to idle
+
+To update the panel script after edits, scp it to the Pi and restart `panel6.py` there.
+
+### nowplaying-server (ThinkPad, always running)
+
+`/usr/local/bin/nowplaying-server` is a tiny HTTP server on **port 8765** that the Pi panel polls for track info. It wraps `spotify-connect now-playing` and the `now-playing` script, with a short cache (15s Spotify, 60s radio) to avoid hammering the APIs.
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /spotify` | `{"track": "Song, by Artist"}` or `{"track": null}` |
+| `GET /radio/<bridge-id>` | `{"track": "Song, by Artist"}` or `{"track": null}` |
+
+Managed by systemd: `sudo systemctl status nowplaying-server`
+
+**Resource footprint:** ~10 MB RSS at idle. Subprocess calls to `spotify-connect` and `now-playing` are cached, so real work only happens every 15–60s during active sessions — not on every request.
+
+```bash
+sudo systemctl status nowplaying-server   # check
+sudo systemctl restart nowplaying-server  # restart after script changes
+```
 
 ## Useful commands
 
