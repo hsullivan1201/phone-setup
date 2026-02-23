@@ -272,6 +272,19 @@ def handle_event(event):
             stop_nowplaying()
         print(f"Call: {exten}")
 
+    elif etype == 'Newexten' and event.get('Priority') == '1' \
+            and exten in REAL_EXTENSIONS \
+            and state['active_ext'] != exten:
+        state['active_ext'] = exten
+        state['active_bridge'] = None
+        if exten in SPOTIFY_EXTS:
+            show_active(f'EXT {exten}', 'CALL IN PROGRESS')
+            start_nowplaying('/spotify', 15)
+        else:
+            show_active(f'EXT {exten}', 'CALL IN PROGRESS')
+            stop_nowplaying()
+        print(f"Transfer: {exten}")
+
     elif etype == 'Hangup':
         stop_nowplaying()
         state['bottom_label'] = ''
@@ -323,7 +336,7 @@ def ami_loop():
             # Restore display if a call/radio was already active
             restore_state()
 
-            sock.send(b'Action: Events\r\nEventMask: call,system,dtmf\r\n\r\n')
+            sock.send(b'Action: Events\r\nEventMask: call,system,dtmf,dialplan\r\n\r\n')
 
             with state['ami_lock']:
                 state['ami_sock'] = sock
