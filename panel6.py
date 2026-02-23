@@ -148,6 +148,7 @@ def update_nowplaying(track):
 
 # ── Now-playing poll thread ──────────────────────────────
 def _nowplaying_poll(stop_event, url_path, interval):
+    quick_retry = True
     while not stop_event.is_set():
         try:
             with urllib.request.urlopen(
@@ -164,7 +165,11 @@ def _nowplaying_poll(stop_event, url_path, interval):
                 update_nowplaying(data.get('track'))
         except Exception:
             pass
-        stop_event.wait(interval)
+        # On start, do a quick follow-up after 5s in case playback
+        # hadn't reported yet on the immediate first poll.
+        wait = 5 if quick_retry else interval
+        quick_retry = False
+        stop_event.wait(wait)
 
 def start_nowplaying(url_path, interval):
     stop_nowplaying()
@@ -274,7 +279,8 @@ def handle_event(event):
 
     elif etype == 'Newexten' and event.get('Priority') == '1' \
             and exten in REAL_EXTENSIONS \
-            and state['active_ext'] != exten:
+            and state['active_ext'] != exten \
+            and not (exten == '100' and state['active_ext'] in {'0', '100'}):
         state['active_ext'] = exten
         state['active_bridge'] = None
         if exten in SPOTIFY_EXTS:

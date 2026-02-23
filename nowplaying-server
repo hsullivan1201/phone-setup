@@ -12,7 +12,7 @@ import threading
 import time
 
 PORT = 8765
-CACHE_TTL_SPOTIFY = 15
+CACHE_TTL_SPOTIFY = 5
 CACHE_TTL_RADIO   = 60
 
 REAL_EXTENSIONS = (
