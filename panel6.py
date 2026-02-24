@@ -3,6 +3,7 @@ import socket
 import threading
 import time
 import datetime
+import unicodedata
 import urllib.request
 import RPi.GPIO as GPIO
 from RPLCD.i2c import CharLCD
@@ -89,11 +90,15 @@ for pin in ['KEY', 'MISSILE', 'SPKR', 'SCHED', 'ENC_CLK', 'ENC_DT', 'ENC_SW']:
 # ── LCD Setup ───────────────────────────────────────────
 lcd = CharLCD('PCF8574', LCD_ADDRESS)
 
+def _lcd_clean(text):
+    """Strip accents/diacritics so HD44780 displays them cleanly."""
+    return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+
 def lcd_show(lines):
     lcd.clear()
     for i, line in enumerate(lines[:4]):
         lcd.cursor_pos = (i, 0)
-        lcd.write_string(line[:20])
+        lcd.write_string(_lcd_clean(line)[:20])
 
 # ── Backlight dimmer (I2C software PWM) ─────────────────
 def backlight_loop():
@@ -162,7 +167,13 @@ def _nowplaying_poll(stop_event, url_path, interval):
                 l4 = (data.get('artist') or '')[:20]
                 lcd_show([l1, l2, l3, l4])
             else:
-                update_nowplaying(data.get('track'))
+                track = data.get('track') or ''
+                if ' - ' in track:
+                    artist, song = track.split(' - ', 1)
+                    l1, l2 = state['display_top']
+                    lcd_show([l1, l2, song[:20], artist[:20]])
+                else:
+                    update_nowplaying(track)
         except Exception:
             pass
         # On start, do a quick follow-up after 5s in case playback
