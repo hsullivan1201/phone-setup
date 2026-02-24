@@ -168,9 +168,12 @@ def _nowplaying_poll(stop_event, url_path, interval):
                 lcd_show([l1, l2, l3, l4])
             else:
                 track = data.get('track') or ''
+                l1, l2 = state['display_top']
                 if ' - ' in track:
                     artist, song = track.split(' - ', 1)
-                    l1, l2 = state['display_top']
+                    lcd_show([l1, l2, song[:20], artist[:20]])
+                elif ' by ' in track:
+                    song, artist = track.split(' by ', 1)
                     lcd_show([l1, l2, song[:20], artist[:20]])
                 else:
                     update_nowplaying(track)
