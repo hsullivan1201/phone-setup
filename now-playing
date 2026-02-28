@@ -39,6 +39,7 @@ STATIONS = {
     "radio-gamut":     {"name": "The Gamut",       "ext": "716", "stream": "https://playerservices.streamtheworld.com/api/livestream-redirect/WWFDAM.mp3"},
     "radio-weta":      {"name": "WETA Classical",  "ext": "717", "stream": "https://weta.streamguys1.com/wetaclassical-icy"},
     "radio-npr":       {"name": "NPR",             "ext": "718", "stream": "http://npr-ice.streamguys1.com/live.mp3"},
+    "radio-mixfranco": {"name": "Mix Franco", "ext": "719", "api": "mixfranco"},
 }
 
 ENV_FILE = "/etc/asterisk/deepgram.env"
@@ -150,7 +151,34 @@ def get_wnyc():
     return None
 
 
-API_FETCHERS = {"kexp": get_kexp, "bff": get_bff, "wnyc": get_wnyc, "ckdu": get_ckdu}
+def get_mixfranco():
+    """Fetch today's Mix Franco episode title from the podcast RSS feed."""
+    import xml.etree.ElementTree as ET
+    import json as _json
+    try:
+        req = urllib.request.Request(
+            "https://itunes.apple.com/lookup?id=805602948&entity=podcast",
+            headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = _json.load(resp)
+        rss_url = data["results"][0]["feedUrl"]
+    except Exception:
+        rss_url = "http://podcast.cism893.ca/rss/mix-franco"
+    try:
+        req2 = urllib.request.Request(rss_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req2, timeout=10) as resp2:
+            root = ET.fromstring(resp2.read())
+        item = root.find("channel/item")
+        if item is not None:
+            title_el = item.find("title")
+            if title_el is not None and title_el.text:
+                return title_el.text.strip()
+    except Exception:
+        pass
+    return None
+
+
+API_FETCHERS = {"kexp": get_kexp, "bff": get_bff, "wnyc": get_wnyc, "ckdu": get_ckdu, "mixfranco": get_mixfranco}
 
 
 def format_track_info(info):

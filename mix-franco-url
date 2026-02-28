@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Output the MP3 URL for today's CISM Mix Franco podcast episode.
+
+Usage:
+    mix-franco-url          # prints MP3 URL
+    mix-franco-url title    # prints episode title
+"""
+import json, sys, urllib.request, xml.etree.ElementTree as ET
+
+ITUNES_ID = 805602948
+FALLBACK_RSS = "http://podcast.cism893.ca/rss/mix-franco"
+
+def get_rss_url():
+    req = urllib.request.Request(
+        f"https://itunes.apple.com/lookup?id={ITUNES_ID}&entity=podcast",
+        headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        return json.load(resp)["results"][0]["feedUrl"]
+
+def get_latest_episode(rss_url):
+    req = urllib.request.Request(rss_url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        root = ET.fromstring(resp.read())
+    item = root.find("channel/item")
+    if item is None:
+        raise RuntimeError("No episodes in feed")
+    enclosure = item.find("enclosure")
+    if enclosure is None:
+        raise RuntimeError("No enclosure tag")
+    url = enclosure.attrib.get("url", "").strip()
+    if not url:
+        raise RuntimeError("Empty enclosure URL")
+    title_el = item.find("title")
+    title = title_el.text.strip() if title_el is not None and title_el.text else ""
+    return title, url
+
+mode = sys.argv[1] if len(sys.argv) > 1 else "url"
+try:
+    try:
+        rss_url = get_rss_url()
+    except Exception:
+        rss_url = FALLBACK_RSS
+    title, mp3_url = get_latest_episode(rss_url)
+    print(title if mode == "title" else mp3_url, end="")
+    sys.exit(0)
+except Exception as e:
+    print(f"mix-franco-url: {e}", file=sys.stderr)
+    sys.exit(1)

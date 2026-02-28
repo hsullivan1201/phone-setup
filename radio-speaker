@@ -25,6 +25,7 @@ declare -A STREAMS=(
     [radio-gamut]="https://playerservices.streamtheworld.com/api/livestream-redirect/WWFDAM.mp3"
     [radio-weta]="https://weta.streamguys1.com/wetaclassical-icy"
     [radio-npr]="http://npr-ice.streamguys1.com/live.mp3"
+    [radio-mixfranco]=""
 )
 
 stop_playback() {
@@ -35,7 +36,11 @@ stop_playback() {
 case "$1" in
     start)
         station="$2"
-        url="${STREAMS[$station]}"
+        if [[ "$station" == "radio-mixfranco" ]]; then
+            url=$(/usr/local/bin/mix-franco-url 2>/dev/null)
+        else
+            url="${STREAMS[$station]}"
+        fi
         if [[ -z "$url" ]]; then
             exit 1
         fi

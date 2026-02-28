@@ -49,7 +49,7 @@ Daily Briefing (204) supports an optional preference file at
 short and specific, for example: topics to prioritize, topics to avoid, and
 desired tone/length.
 
-### Radio (7xx) -- 19 stations
+### Radio (7xx) -- 20 stations
 
 | Ext | Station | Region |
 |-----|---------|--------|
@@ -72,6 +72,7 @@ desired tone/length.
 | 716 | The Gamut (WWFD 820 AM) | Washington DC |
 | 717 | WETA Classical 90.9 | Washington DC |
 | 718 | NPR | National |
+| 719 | Mix Franco (CISM podcast) | Montreal |
 
 DTMF while listening: **4** = now playing, **5** = speakers on (ConfBridge/baresip), **6** = all speakers off, **7** = speakers on (direct stream).
 
@@ -112,6 +113,11 @@ Alternatively, dial **205** for DJ Cool — a voice AI music concierge that sear
 | `dnsmasq.conf` | DHCP/DNS for the HT701 |
 | `/etc/asterisk/deepgram.env` | Deepgram API key for now-playing TTS (readable by asterisk user only) |
 | `/etc/sudoers.d/radio-speaker` | Lets asterisk user run ffplay/aplay as hazel for speaker audio |
+
+**Mix Franco (719)** is a daily podcast rather than a live stream. The MP3 URL
+is resolved fresh via RSS each time the extension is dialed (`/usr/local/bin/mix-franco-url`).
+Episode updates daily around 6–10 AM Montreal time. All DTMF controls work
+identically to live stations (4 = now playing, 5 = ConfBridge speakers, 6 = off, 7 = direct stream).
 
 ### How radio works
 
