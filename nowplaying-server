@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """HTTP server exposing now-playing and call status for the InfoLine panel.
 
-GET /spotify          → {"track": "Song, by Artist"} or {"track": null}
-GET /radio/<bridge>  → {"track": "Song, by Artist"} or {"track": null}
-GET /status          → {"type": "idle"} | {"type": "call", "ext": "205"} | {"type": "radio", "bridge": "radio-kexp"}
+GET  /spotify          → {"track": "Song", "artist": "Artist"} or nulls
+GET  /radio/<bridge>   → {"track": "Song, by Artist"} or {"track": null}
+GET  /status           → {"type": "idle"} | {"type": "call", "ext": "205"} | {"type": "radio", "bridge": "radio-kexp"}
+
+POST /dial/<ext>       → {"ok": true, "ext": "710"} — originates call to PJSIP/100
+POST /dial/random      → {"ok": true, "ext": "710", "name": "KEXP 90.3"} — Surprise Me
+POST /stop             → {"ok": true} — hangs up all channels
+POST /dtmf/<digit>     → {"ok": true} — sends DTMF to active channel
 """
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
+import random
+import re
+import socket
 import subprocess
 import threading
 import time
@@ -14,6 +22,20 @@ import time
 PORT = 8765
 CACHE_TTL_SPOTIFY = 5
 CACHE_TTL_RADIO   = 60
+
+THINKPAD_IP  = '127.0.0.1'   # AMI is local; change if running panel remotely
+AMI_PORT     = 5038
+AMI_USER     = 'panel'
+AMI_SECRET   = 'panelpass'
+
+VALID_EXTENSIONS = (
+    {'0'}
+    | {str(i) for i in range(101, 106)}
+    | {str(i) for i in range(200, 206)}
+    | {str(i) for i in range(700, 720)}
+    | {'730'}
+    | {str(i) for i in range(800, 812)}
+)
 
 REAL_EXTENSIONS = (
     {str(i) for i in range(100, 106)}
@@ -27,8 +49,24 @@ RADIO_BRIDGES = {
     'radio-cism', 'radio-ciut', 'radio-ckdu', 'radio-wfmu', 'radio-newsounds',
     'radio-wnyc', 'radio-wmbr', 'radio-wbur', 'radio-chirp', 'radio-wbez',
     'radio-kexp', 'radio-kalx', 'radio-bff', 'radio-kqed', 'radio-kboo',
-    'radio-xray', 'radio-gamut', 'radio-weta', 'radio-npr',
+    'radio-xray', 'radio-gamut', 'radio-weta', 'radio-npr', 'radio-mixfranco',
 }
+
+SPOTIFY_EXTS = {'205'} | {str(i) for i in range(730, 812)}
+
+# Surprise Me pool — edit to taste
+SURPRISE_POOL = [
+    ('703', 'WFMU 91.1'),
+    ('704', 'New Sounds'),
+    ('710', 'KEXP 90.3'),
+    ('712', 'BFF.fm'),
+    ('715', 'XRAY.fm'),
+    ('716', 'The Gamut'),
+    ('717', 'WETA Classical'),
+    ('719', 'Mix Franco'),
+]
+
+VALID_DTMF = set('1234567')
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 _cache      = {}
@@ -58,7 +96,11 @@ def spotify_now_playing():
         )
         text = r.stdout.strip()
         parts = text.split(", by ", 1) if text and text != "Nothing playing" else None
-        result = {"track": parts[0], "artist": parts[1]} if parts and len(parts) == 2 else ({"track": text, "artist": None} if parts else None)
+        result = (
+            {"track": parts[0], "artist": parts[1]}
+            if parts and len(parts) == 2
+            else ({"track": text, "artist": None} if parts else None)
+        )
     except Exception:
         result = None
     cache_set('spotify', result, CACHE_TTL_SPOTIFY)
@@ -87,7 +129,6 @@ def radio_now_playing(bridge):
 
 def current_status():
     """Query Asterisk CLI for active call or radio bridge."""
-    # Check ConfBridges first (radio)
     try:
         r = subprocess.run(
             ['sudo', '-n', 'asterisk', '-rx', 'confbridge list'],
@@ -100,14 +141,12 @@ def current_status():
     except Exception:
         pass
 
-    # Check active channels (calls)
     try:
         r = subprocess.run(
             ['sudo', '-n', 'asterisk', '-rx', 'core show channels'],
             capture_output=True, text=True, timeout=5,
         )
         for line in r.stdout.splitlines():
-            # Location column: "ext@context:priority"
             for token in line.split():
                 if '@' in token:
                     ext = token.split('@')[0]
@@ -118,8 +157,91 @@ def current_status():
 
     return {'type': 'idle'}
 
+# ── AMI helpers ───────────────────────────────────────────────────────────────
+def _ami_send(action: str) -> str:
+    """Open a fresh AMI connection, send one action, return the response."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5)
+        s.connect((THINKPAD_IP, AMI_PORT))
+        s.recv(1024)  # banner
+
+        login = (
+            f'Action: Login\r\nUsername: {AMI_USER}\r\nSecret: {AMI_SECRET}\r\n\r\n'
+        )
+        s.send(login.encode())
+        buf = ''
+        # drain login response
+        try:
+            while 'Authentication accepted' not in buf:
+                chunk = s.recv(4096).decode(errors='replace')
+                if not chunk:
+                    break
+                buf += chunk
+        except socket.timeout:
+            pass
+
+        if 'Authentication accepted' not in buf:
+            return 'error: login failed'
+
+        s.send(action.encode())
+        time.sleep(0.3)
+        try:
+            resp = s.recv(4096).decode(errors='replace')
+        except socket.timeout:
+            resp = ''
+        s.close()
+        return resp
+    except Exception as e:
+        return f'error: {e}'
+
+def ami_originate(ext: str) -> bool:
+    action = (
+        f'Action: Originate\r\n'
+        f'Channel: PJSIP/100\r\n'
+        f'Exten: {ext}\r\n'
+        f'Context: internal\r\n'
+        f'Priority: 1\r\n'
+        f'Timeout: 30000\r\n\r\n'
+    )
+    resp = _ami_send(action)
+    return 'error' not in resp.lower() or 'queued' in resp.lower()
+
+def ami_hangup_all() -> bool:
+    resp = _ami_send(
+        'Action: Command\r\nCommand: channel request hangup all\r\n\r\n'
+    )
+    return True  # best-effort; hangup all doesn't always return success
+
+def ami_send_dtmf(digit: str) -> tuple[bool, str]:
+    """Find the active PJSIP/100 channel and send a DTMF digit."""
+    try:
+        r = subprocess.run(
+            ['sudo', '-n', 'asterisk', '-rx', 'core show channels concise'],
+            capture_output=True, text=True, timeout=5,
+        )
+        channel = None
+        for line in r.stdout.splitlines():
+            if 'PJSIP/100-' in line:
+                channel = line.split('!')[0]
+                break
+        if not channel:
+            return False, 'no active channel'
+
+        action = (
+            f'Action: PlayDTMF\r\n'
+            f'Channel: {channel}\r\n'
+            f'Digit: {digit}\r\n\r\n'
+        )
+        _ami_send(action)
+        return True, channel
+    except Exception as e:
+        return False, str(e)
+
 # ── HTTP ──────────────────────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
+
+    # ── GET ──────────────────────────────────────────────────────────────────
     def do_GET(self):
         if self.path == '/spotify':
             result = spotify_now_playing()
@@ -130,17 +252,66 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == '/status':
             body = json.dumps(current_status())
         else:
-            self.send_response(404)
-            self.end_headers()
+            self._send(404, '{"error": "not found"}')
             return
-        self.send_response(200)
+        self._send(200, body)
+
+    # ── POST ─────────────────────────────────────────────────────────────────
+    def do_POST(self):
+        path = self.path.rstrip('/')
+
+        # POST /stop
+        if path == '/stop':
+            ami_hangup_all()
+            self._send(200, '{"ok": true}')
+            return
+
+        # POST /dial/random
+        if path == '/dial/random':
+            ext, name = random.choice(SURPRISE_POOL)
+            ok = ami_originate(ext)
+            body = json.dumps({'ok': ok, 'ext': ext, 'name': name})
+            self._send(200, body)
+            return
+
+        # POST /dial/<ext>
+        m = re.fullmatch(r'/dial/(\w+)', path)
+        if m:
+            ext = m.group(1)
+            # Normalise: "0" → "0", but also accept leading zeros gracefully
+            if ext not in VALID_EXTENSIONS:
+                self._send(400, json.dumps({'ok': False, 'error': f'invalid extension {ext}'}))
+                return
+            ok = ami_originate(ext)
+            self._send(200, json.dumps({'ok': ok, 'ext': ext}))
+            return
+
+        # POST /dtmf/<digit>
+        m = re.fullmatch(r'/dtmf/([1-9])', path)
+        if m:
+            digit = m.group(1)
+            if digit not in VALID_DTMF:
+                self._send(400, json.dumps({'ok': False, 'error': 'invalid digit'}))
+                return
+            ok, detail = ami_send_dtmf(digit)
+            body = json.dumps({'ok': ok} if ok else {'ok': False, 'error': detail})
+            self._send(200, body)
+            return
+
+        self._send(404, '{"error": "not found"}')
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+    def _send(self, code: int, body: str):
+        enc = body.encode()
+        self.send_response(code)
         self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(enc)))
         self.end_headers()
-        self.wfile.write(body.encode())
+        self.wfile.write(enc)
 
     def log_message(self, *args):
         pass
 
 if __name__ == '__main__':
-    print(f'now-playing server on :{PORT}', flush=True)
+    print(f'nowplaying-server on :{PORT}', flush=True)
     HTTPServer(('', PORT), Handler).serve_forever()
