@@ -29,7 +29,9 @@ declare -A STREAMS=(
 )
 
 stop_playback() {
-    pkill -f "ffplay.*-nodisp" 2>/dev/null
+    # Match ONLY our radio ffplay (it uniquely passes -loglevel quiet) so we
+    # never kill vivian's other audio (tv_thing, etc.) sharing this session.
+    pkill -f "ffplay.*-loglevel quiet" 2>/dev/null
     rm -f "$PID_FILE"
 }
 
@@ -47,7 +49,7 @@ case "$1" in
         stop_playback
         # setsid launches ffplay in a new session so it survives parent exit.
         # We can't easily get setsid's child PID, so write setsid's own PID.
-        setsid sudo -u hazel XDG_RUNTIME_DIR=/run/user/1000 ffplay -nodisp -loglevel quiet "$url" < /dev/null > /dev/null 2>&1 &
+        setsid sudo -u hazel XDG_RUNTIME_DIR=/run/user/1005 ffplay -nodisp -loglevel quiet "$url" < /dev/null > /dev/null 2>&1 &
         echo $! > "$PID_FILE"
         ;;
     stop)
