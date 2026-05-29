@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Starts/stops specialist AI agents (200-206) on demand.
+# Starts/stops specialist AI agents (200-207) on demand.
 # Intended to be called by Asterisk dialplan via:
 #   sudo -u hazel /usr/local/bin/agent-ondemand start 200
 #   sudo -u hazel /usr/local/bin/agent-ondemand stop 200
 
 usage() {
-  echo "Usage: $0 {start|stop|restart|status} {200|201|202|203|204|205|206}" >&2
+  echo "Usage: $0 {start|stop|restart|status} {200|201|202|203|204|205|206|207}" >&2
   exit 2
 }
 
@@ -24,6 +24,7 @@ declare -A AGENT_DIR=(
   [204]="briefing"
   [205]="music"
   [206]="moroni"
+  [207]="companion"
 )
 
 declare -A AGENT_PORT=(
@@ -34,6 +35,7 @@ declare -A AGENT_PORT=(
   [204]=9204
   [205]=9205
   [206]=9206
+  [207]=9207
 )
 
 AGENT="${AGENT_DIR[$EXT]:-}"

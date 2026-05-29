@@ -40,6 +40,7 @@ Nortel analog phone -> Grandstream HT701 ATA -> Asterisk 23.2.2 on ThinkPad (Arc
 | 204 | Daily Briefing | 9204 |
 | 205 | DJ Cool (Music Concierge) | 9205 |
 | 206 | Moroni (the angel) | 9206 |
+| 207 | Companion ("Companionship") | 9207 |
 
 Each routes through AudioSocket to a standalone Python agent in `~/operator/agents/`.
 The 2xx agents are now launched on demand by `agent-ondemand` and stopped when
@@ -198,7 +199,7 @@ sudo systemctl restart nowplaying-server
 | `nowplaying-server` | `/usr/local/bin/nowplaying-server` | HTTP server (port 8765) polled by the InfoLine panel. Exposes `/spotify` (track + artist), `/radio/<bridge>` (track), and `/status` (current call/radio state via Asterisk CLI). Runs as `hazel` via systemd (`nowplaying-server.service`). |
 | `radio-speaker` | `/usr/local/bin/radio-speaker` | Direct webstream playback on laptop speakers via ffplay (`start <station>` / `stop`). Cleanup uses `pkill -x ffplay` (not PID file). |
 | `spotify-connect` | `/usr/local/bin/spotify-connect` | Librespot lifecycle + Spotify Web API control (start, stop, play, pause, next, prev, now-playing). Used by 730/8xx dialplan and DJ Cool agent. |
-| `agent-ondemand` | `/usr/local/bin/agent-ondemand` | Starts/stops specialist AI agents (200-206) on demand so those Python processes are only up during active calls. |
+| `agent-ondemand` | `/usr/local/bin/agent-ondemand` | Starts/stops specialist AI agents (200-207) on demand so those Python processes are only up during active calls. |
 | `stream-decode` | `/usr/local/bin/stream-decode` | ffmpeg wrapper: any audio stream -> 8kHz slin16 for Asterisk |
 | `ring-phone` | `/usr/local/bin/ring-phone` | Ring the Nortel |
 | `alarm` | `/usr/local/bin/alarm` | Ring phone + play alarm clip |
