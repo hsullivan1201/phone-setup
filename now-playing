@@ -8,6 +8,7 @@ Usage:
 
 import json
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -43,23 +44,28 @@ STATIONS = {
 }
 
 ENV_FILE = "/etc/asterisk/deepgram.env"
+OPERATOR_ENV_FILE = "/home/hazel/operator/.env"
 DEEPGRAM_VOICE = "aura-2-asteria-en"
 SPEAKER_PID_FILE = "/tmp/radio-speaker.pid"
+AUDIO_USER = "hazel"
+AUDIO_RUNTIME_DIR = "/run/user/1005"
+TTS_GAIN = 1.8
 
 
 def load_api_key():
-    """Load DEEPGRAM_API_KEY from env or operator .env file."""
+    """Load DEEPGRAM_API_KEY from env or a local dotenv-style file."""
     key = os.environ.get("DEEPGRAM_API_KEY")
     if key:
         return key
-    try:
-        with open(ENV_FILE) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("DEEPGRAM_API_KEY="):
-                    return line.split("=", 1)[1].strip()
-    except FileNotFoundError:
-        pass
+    for path in (ENV_FILE, OPERATOR_ENV_FILE):
+        try:
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("DEEPGRAM_API_KEY="):
+                        return line.split("=", 1)[1].strip().strip("'\"")
+        except (FileNotFoundError, PermissionError):
+            pass
     return None
 
 
@@ -236,17 +242,39 @@ def generate_tts_deepgram(text, output_path):
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(8000)
-        wav.writeframes(pcm_data)
+        wav.writeframes(apply_pcm16_gain(pcm_data, TTS_GAIN))
+
+
+def apply_pcm16_gain(pcm_data, gain):
+    """Apply gain to little-endian signed 16-bit PCM with clipping."""
+    if gain == 1:
+        return pcm_data
+    amplified = bytearray(len(pcm_data))
+    for offset in range(0, len(pcm_data) - 1, 2):
+        sample = int.from_bytes(pcm_data[offset:offset + 2], "little", signed=True)
+        sample = max(-32768, min(32767, int(sample * gain)))
+        amplified[offset:offset + 2] = sample.to_bytes(2, "little", signed=True)
+    if len(pcm_data) % 2:
+        amplified[-1] = pcm_data[-1]
+    return bytes(amplified)
 
 
 def generate_tts_espeak(text, output_path):
     """Fallback: generate 8kHz 16-bit mono wav using espeak-ng + ffmpeg."""
+    if not shutil.which("espeak-ng"):
+        raise RuntimeError("espeak-ng is not installed")
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("ffmpeg is not installed")
     espeak = subprocess.Popen(
         ["espeak-ng", "--stdout", "-v", "en-us", "-s", "150", text],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
     subprocess.run(
-        ["ffmpeg", "-y", "-i", "pipe:0", "-ar", "8000", "-ac", "1", output_path],
+        [
+            "ffmpeg", "-y", "-i", "pipe:0",
+            "-filter:a", f"volume={TTS_GAIN}",
+            "-ar", "8000", "-ac", "1", output_path,
+        ],
         stdin=espeak.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         check=True,
     )
@@ -256,8 +284,14 @@ def generate_tts(text, output_path):
     """Generate TTS wav. Uses Deepgram, falls back to espeak-ng."""
     try:
         generate_tts_deepgram(text, output_path)
-    except Exception:
-        generate_tts_espeak(text, output_path)
+    except Exception as deepgram_error:
+        try:
+            generate_tts_espeak(text, output_path)
+        except Exception as espeak_error:
+            raise RuntimeError(
+                f"TTS generation failed: Deepgram: {deepgram_error}; "
+                f"espeak-ng: {espeak_error}"
+            ) from espeak_error
 
 
 
@@ -267,7 +301,7 @@ def _get_ffplay_sink_inputs():
     indices = []
     try:
         result = subprocess.run(
-            ["sudo", "-u", "hazel", "XDG_RUNTIME_DIR=/run/user/1000",
+            ["sudo", "-u", AUDIO_USER, f"XDG_RUNTIME_DIR={AUDIO_RUNTIME_DIR}",
              "pactl", "list", "sink-inputs"],
             capture_output=True, text=True, timeout=5)
         current_index = None
@@ -299,21 +333,20 @@ def play_on_speaker(wav_path):
     """Play wav on laptop speakers, ducking the music stream."""
     # Lower ffplay's PulseAudio volume during announcement instead of
     # SIGSTOP (which causes stream servers to drop the connection).
-    env = {"XDG_RUNTIME_DIR": "/run/user/1000"}
     sink_indices = _get_ffplay_sink_inputs()
     for idx in sink_indices:
         subprocess.run(
-            ["sudo", "-u", "hazel", "XDG_RUNTIME_DIR=/run/user/1000",
+            ["sudo", "-u", AUDIO_USER, f"XDG_RUNTIME_DIR={AUDIO_RUNTIME_DIR}",
              "pactl", "set-sink-input-volume", idx, "45%"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(
-        ["sudo", "-u", "hazel", "XDG_RUNTIME_DIR=/run/user/1000",
+        ["sudo", "-u", AUDIO_USER, f"XDG_RUNTIME_DIR={AUDIO_RUNTIME_DIR}",
          "paplay", wav_path],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     for idx in sink_indices:
         subprocess.run(
-            ["sudo", "-u", "hazel", "XDG_RUNTIME_DIR=/run/user/1000",
+            ["sudo", "-u", AUDIO_USER, f"XDG_RUNTIME_DIR={AUDIO_RUNTIME_DIR}",
              "pactl", "set-sink-input-volume", idx, "100%"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

@@ -27,6 +27,7 @@ THINKPAD_IP  = '127.0.0.1'   # AMI is local; change if running panel remotely
 AMI_PORT     = 5038
 AMI_USER     = 'panel'
 AMI_SECRET   = 'panelpass'
+ASTERISK_BIN = '/usr/sbin/asterisk'
 
 VALID_EXTENSIONS = (
     {'0'}
@@ -39,8 +40,8 @@ VALID_EXTENSIONS = (
 
 REAL_EXTENSIONS = (
     {str(i) for i in range(100, 106)}
-    | {str(i) for i in range(200, 206)}
-    | {str(i) for i in range(700, 719)}
+    | {str(i) for i in range(200, 209)}
+    | {str(i) for i in range(700, 720)}
     | {str(i) for i in range(730, 812)}
     | {'0'}
 )
@@ -52,7 +53,7 @@ RADIO_BRIDGES = {
     'radio-xray', 'radio-gamut', 'radio-weta', 'radio-npr', 'radio-mixfranco',
 }
 
-SPOTIFY_EXTS = {'205'} | {str(i) for i in range(730, 812)}
+SPOTIFY_EXTS = {'205', '208'} | {str(i) for i in range(730, 812)}
 
 # Surprise Me pool — edit to taste
 SURPRISE_POOL = [
@@ -66,7 +67,7 @@ SURPRISE_POOL = [
     ('719', 'Mix Franco'),
 ]
 
-VALID_DTMF = set('1234567')
+VALID_DTMF = set('123456789')
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 _cache      = {}
@@ -131,7 +132,7 @@ def current_status():
     """Query Asterisk CLI for active call or radio bridge."""
     try:
         r = subprocess.run(
-            ['sudo', '-n', 'asterisk', '-rx', 'confbridge list'],
+            ['sudo', '-n', ASTERISK_BIN, '-rx', 'confbridge list'],
             capture_output=True, text=True, timeout=5,
         )
         for line in r.stdout.splitlines():
@@ -143,7 +144,7 @@ def current_status():
 
     try:
         r = subprocess.run(
-            ['sudo', '-n', 'asterisk', '-rx', 'core show channels'],
+            ['sudo', '-n', ASTERISK_BIN, '-rx', 'core show channels'],
             capture_output=True, text=True, timeout=5,
         )
         for line in r.stdout.splitlines():
@@ -195,6 +196,16 @@ def _ami_send(action: str) -> str:
     except Exception as e:
         return f'error: {e}'
 
+def _ami_ok(resp: str) -> bool:
+    lower = resp.lower()
+    return (
+        'response: success' in lower
+        or 'response: follows' in lower
+        or 'response: queued' in lower
+        or 'originate successfully queued' in lower
+    )
+
+
 def ami_originate(ext: str) -> bool:
     action = (
         f'Action: Originate\r\n'
@@ -205,7 +216,7 @@ def ami_originate(ext: str) -> bool:
         f'Timeout: 30000\r\n\r\n'
     )
     resp = _ami_send(action)
-    return 'error' not in resp.lower() or 'queued' in resp.lower()
+    return _ami_ok(resp)
 
 def ami_hangup_all() -> bool:
     resp = _ami_send(
@@ -217,7 +228,7 @@ def ami_send_dtmf(digit: str) -> tuple[bool, str]:
     """Find the active PJSIP/100 channel and send a DTMF digit."""
     try:
         r = subprocess.run(
-            ['sudo', '-n', 'asterisk', '-rx', 'core show channels concise'],
+            ['sudo', '-n', ASTERISK_BIN, '-rx', 'core show channels concise'],
             capture_output=True, text=True, timeout=5,
         )
         channel = None
@@ -233,7 +244,9 @@ def ami_send_dtmf(digit: str) -> tuple[bool, str]:
             f'Channel: {channel}\r\n'
             f'Digit: {digit}\r\n\r\n'
         )
-        _ami_send(action)
+        resp = _ami_send(action)
+        if not _ami_ok(resp):
+            return False, resp.strip() or 'AMI DTMF failed'
         return True, channel
     except Exception as e:
         return False, str(e)

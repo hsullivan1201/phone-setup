@@ -79,7 +79,7 @@ REAL_EXTENSIONS = {str(i) for i in range(100, 106)} \
                 | {str(i) for i in range(730, 812)} \
                 | {'0'}
 
-SPOTIFY_EXTS = {'205'} | {str(i) for i in range(730, 812)}
+SPOTIFY_EXTS = {'205', '208'} | {str(i) for i in range(730, 812)}
 
 # ── GPIO Setup ──────────────────────────────────────────
 GPIO.setmode(GPIO.BCM)

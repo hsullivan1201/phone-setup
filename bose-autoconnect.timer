@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry Bose Bluetooth speaker connection for phone audio
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=2min
+AccuracySec=20s
+Unit=bose-autoconnect.service
+
+[Install]
+WantedBy=timers.target

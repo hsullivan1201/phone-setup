@@ -1,0 +1,11 @@
+[Unit]
+Description=Reconnect Bose Bluetooth speaker for phone audio
+Wants=bluetooth.service user@1005.service
+After=bluetooth.service user@1005.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bose-autoconnect
+
+[Install]
+WantedBy=multi-user.target

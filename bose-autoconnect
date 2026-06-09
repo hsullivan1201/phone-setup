@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Keep the phone-system Bluetooth speaker connected without requiring SSH login.
+
+set -u
+
+DEVICE_MAC="${BOSE_MAC:-78:2B:64:FA:83:5C}"
+AUDIO_USER="${AUDIO_USER:-hazel}"
+AUDIO_UID="${AUDIO_UID:-1005}"
+AUDIO_GID="${AUDIO_GID:-1005}"
+AUDIO_HOME="${AUDIO_HOME:-/home/${AUDIO_USER}}"
+RUNTIME_DIR="${AUDIO_RUNTIME_DIR:-/run/user/${AUDIO_UID}}"
+BUS_ADDRESS="unix:path=${RUNTIME_DIR}/bus"
+BLUEZ_SINK="bluez_output.${DEVICE_MAC//:/_}.1"
+CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-18}"
+SINK_WAIT="${SINK_WAIT:-8}"
+
+log() {
+    printf '%s\n' "$*"
+}
+
+as_audio_user() {
+    setpriv --reuid="$AUDIO_UID" --regid="$AUDIO_GID" --init-groups \
+        env HOME="$AUDIO_HOME" USER="$AUDIO_USER" LOGNAME="$AUDIO_USER" \
+            XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+            DBUS_SESSION_BUS_ADDRESS="$BUS_ADDRESS" \
+            "$@"
+}
+
+connected() {
+    bluetoothctl info "$DEVICE_MAC" 2>/dev/null | grep -q 'Connected: yes'
+}
+
+start_audio_stack() {
+    loginctl enable-linger "$AUDIO_USER" >/dev/null 2>&1 || true
+    systemctl start "user@${AUDIO_UID}.service" >/dev/null 2>&1 || true
+
+    for _ in $(seq 1 20); do
+        if [ -S "${RUNTIME_DIR}/bus" ]; then
+            break
+        fi
+        sleep 0.5
+    done
+
+    if [ ! -S "${RUNTIME_DIR}/bus" ]; then
+        log "hazel user bus is not ready at ${RUNTIME_DIR}/bus"
+        return 1
+    fi
+
+    as_audio_user systemctl --user start pipewire pipewire-pulse wireplumber >/dev/null 2>&1 || true
+    as_audio_user pactl info >/dev/null 2>&1
+}
+
+wait_for_sink() {
+    for _ in $(seq 1 "$SINK_WAIT"); do
+        if as_audio_user pactl list sinks short 2>/dev/null | grep -q "$BLUEZ_SINK"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+set_default_sink() {
+    as_audio_user pactl set-default-sink "$BLUEZ_SINK" >/dev/null 2>&1 || true
+}
+
+connect_once() {
+    bluetoothctl trust "$DEVICE_MAC" >/dev/null 2>&1 || true
+    timeout "$CONNECT_TIMEOUT" bluetoothctl connect "$DEVICE_MAC" 2>&1
+}
+
+needs_wireplumber_refresh() {
+    case "$1" in
+        *'Protocol not available'*|*'br-connection-profile-unavailable'*|*'a2dp-sink'*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+refresh_wireplumber() {
+    log 'refreshing hazel wireplumber before retrying Bose connection'
+    as_audio_user systemctl --user restart wireplumber >/dev/null 2>&1 || true
+    sleep 4
+}
+
+finish_if_ready() {
+    if connected && wait_for_sink; then
+        set_default_sink
+        log "Bose connected and ${BLUEZ_SINK} is the default sink"
+        return 0
+    fi
+    return 1
+}
+
+main() {
+    start_audio_stack || true
+
+    if finish_if_ready; then
+        return 0
+    fi
+
+    if connected; then
+        log 'Bose is connected in BlueZ but no PipeWire sink appeared'
+        refresh_wireplumber
+        finish_if_ready && return 0
+    fi
+
+    connect_output="$(connect_once)"
+    connect_status=$?
+    [ -n "$connect_output" ] && log "$connect_output"
+
+    if finish_if_ready; then
+        return 0
+    fi
+
+    if [ "$connect_status" -ne 0 ] && needs_wireplumber_refresh "$connect_output"; then
+        refresh_wireplumber
+        connect_output="$(connect_once)"
+        [ -n "$connect_output" ] && log "$connect_output"
+        finish_if_ready && return 0
+    fi
+
+    log 'Bose is not connected; timer will retry later'
+    return 0
+}
+
+main "$@"

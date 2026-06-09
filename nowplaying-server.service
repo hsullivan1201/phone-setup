@@ -1,0 +1,16 @@
+[Unit]
+Description=C&P Telephone now-playing HTTP server
+After=network-online.target asterisk.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hazel
+Group=hazel
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/local/bin/nowplaying-server
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
