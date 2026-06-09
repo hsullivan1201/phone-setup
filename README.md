@@ -39,8 +39,11 @@ Nortel analog phone -> Grandstream HT701 ATA -> Asterisk 23.2.2 on ThinkPad (Arc
 | 203 | French Tutor | 9203 |
 | 204 | Daily Briefing | 9204 |
 | 205 | DJ Cool (Music Concierge) | 9205 |
-| 206 | Moroni (the angel) | 9206 |
-| 207 | Companion ("Companionship") | 9207 |
+| 206 | Hippie Jesus ("The Open Hand Fellowship") | 9206 |
+| 207 | American Jesus ("The American Gospel Power Hour") | 9207 |
+| 208 | DJ Cool Gemini | 9208 |
+| 209 | Moroni (the angel) | 9209 |
+| 210 | Companion ("Companionship") | 9210 |
 
 Each routes through AudioSocket to a standalone Python agent in `~/operator/agents/`.
 The 2xx agents are now launched on demand by `agent-ondemand` and stopped when
@@ -101,7 +104,7 @@ Playlist mappings are in `spotify-playlists.conf` (deployed to `/etc/asterisk/sp
 | 810 | My playlist #24 |
 | 811 | tunes |
 
-Alternatively, dial **205** for DJ Cool — a voice AI music concierge that searches Spotify, takes requests, and controls playback by conversation.
+Alternatively, dial **205** for DJ Cool — a voice AI music concierge that searches Spotify, takes requests, and controls playback by conversation. Dial **208** for the same DJ Cool setup backed by Gemini 3.5 Flash.
 
 ## Config files
 
@@ -199,7 +202,7 @@ sudo systemctl restart nowplaying-server
 | `nowplaying-server` | `/usr/local/bin/nowplaying-server` | HTTP server (port 8765) polled by the InfoLine panel. Exposes `/spotify` (track + artist), `/radio/<bridge>` (track), and `/status` (current call/radio state via Asterisk CLI). Runs as `hazel` via systemd (`nowplaying-server.service`). |
 | `radio-speaker` | `/usr/local/bin/radio-speaker` | Direct webstream playback on laptop speakers via ffplay (`start <station>` / `stop`). Cleanup uses `pkill -x ffplay` (not PID file). |
 | `spotify-connect` | `/usr/local/bin/spotify-connect` | Librespot lifecycle + Spotify Web API control (start, stop, play, pause, next, prev, now-playing). Used by 730/8xx dialplan and DJ Cool agent. |
-| `agent-ondemand` | `/usr/local/bin/agent-ondemand` | Starts/stops specialist AI agents (200-207) on demand so those Python processes are only up during active calls. |
+| `agent-ondemand` | `/usr/local/bin/agent-ondemand` | Starts/stops specialist AI agents (200-210) on demand so those Python processes are only up during active calls. |
 | `stream-decode` | `/usr/local/bin/stream-decode` | ffmpeg wrapper: any audio stream -> 8kHz slin16 for Asterisk |
 | `ring-phone` | `/usr/local/bin/ring-phone` | Ring the Nortel |
 | `alarm` | `/usr/local/bin/alarm` | Ring phone + play alarm clip |
@@ -380,7 +383,7 @@ A Raspberry Pi connected to a 4-line I²C LCD, a rotary encoder, and several GPI
 **Display logic:**
 - Idle: clock + "C&P TELEPHONE / INFOLINE"
 - Regular call (1xx, 2xx non-Spotify): "EXT xxx / CALL IN PROGRESS"
-- Spotify call (205, 730–811): "EXT xxx / SPOTIFY" + now-playing on lines 3-4 (polled every 15s, blank if nothing playing)
+- Spotify call (205, 208, 730–811): "EXT xxx / SPOTIFY" + now-playing on lines 3-4 (polled every 15s, blank if nothing playing)
 - Radio (700–718): "RADIO / Station Name" + now-playing on lines 3-4 (polled every 45s, blank if no metadata)
 - ConfBridge leave or hangup: returns to idle
 
